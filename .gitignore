@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+.env
+
+# Temp and execution outputs
+temp_*
+output/*.pdf
+output/*.xlsx
+data/processed_state.json
+
+# Keys and credentials
+*service_account*.json
+credentials.json
+secrets.json
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

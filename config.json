@@ -1,0 +1,12 @@
+{
+  "gdrive_folder_id": "13B0ztENtz3PaEUpi4a2c1WY1L6VCSFkq",
+  "gsheet_id": "1vTgzYj7Bund21oW2EJtBRXo4otXGgvEynzwmfgCXYIY",
+  "input_dir": "input",
+  "output_dir": "output",
+  "data_dir": "data",
+  "languages": ["pt"],
+  "naming_format": "{fornecedor}_{farmacia}_{data}_{num_doc}.pdf",
+  "llm_provider": "anthropic",
+  "claude_model": "claude-3-5-sonnet-20241022",
+  "gemini_model": "gemini-1.5-flash"
+}
