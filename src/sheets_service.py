@@ -8,7 +8,7 @@ class SheetsService:
     """
     Serviço de escrita nativa em Google Sheets via Google Sheets API v4.
     Requisito estrito do PRD: usa `values.append` para manter o ficheiro único e estável.
-    Suporta o registo auditável na aba `Log de Execuções` (gerada automaticamente se não existir).
+    Alinha automaticamente os dados com as colunas reais do cabeçalho para evitar desfasamento.
     """
     def __init__(self, spreadsheet_id: str, credentials_json_path: str = None, local_excel_path: str = "output/relatorio_faturas.xlsx", local_json_path: str = "data/documentos.json"):
         self.spreadsheet_id = spreadsheet_id
@@ -37,7 +37,7 @@ class SheetsService:
                 )
                 self.service = build('sheets', 'v4', credentials=creds)
                 self.is_offline = False
-                print(f"Google Sheets API v4 autenticada com sucesso (via {credentials_json_path}).")
+                print(f"Erro ao autenticar GSheets com ficheiro {credentials_json_path}: {e}")
             except Exception as e:
                 print(f"Erro ao autenticar GSheets com ficheiro {credentials_json_path}: {e}")
 
@@ -108,15 +108,29 @@ class SheetsService:
             "Estado Pagamento",
             "Data Pagamento",
             "Confiança",
-            "Ficheiro (link Drive)",
+            "Ficheiro",
             "Nota"
         ]
         self.ensure_sheet_tab_exists("Registo", header)
 
+    def get_sheet_headers(self, tab_name: str) -> list:
+        """Obtém os nomes de colunas do cabeçalho da aba existente."""
+        if self.is_offline or not self.service:
+            return []
+        try:
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'{tab_name}'!1:1"
+            ).execute()
+            rows = res.get('values', [])
+            if rows and len(rows) > 0:
+                return [str(c).strip() for c in rows[0]]
+        except Exception as e:
+            print(f"Aviso ao ler cabeçalho de '{tab_name}': {e}")
+        return []
+
     def append_execution_log(self, log_data: dict) -> bool:
-        """
-        Regista uma linha de auditoria na aba 'Log de Execuções' no final da execução.
-        """
+        """Regista uma linha de auditoria na aba 'Log de Execuções'."""
         self.ensure_log_sheet_exists()
 
         row_values = [
@@ -151,29 +165,62 @@ class SheetsService:
 
     def append_document_row(self, doc_data: dict, drive_url: str) -> bool:
         """
-        Adiciona uma nova linha de documento no registo principal sem nunca recriar a folha.
-        Colunas:
-        1. Nº Documento | 2. Tipo | 3. Fornecedor | 4. Farmácia | 5. Data | 6. Valor (€) | 7. Nº Lote Associado | 8. Estado Pagamento | 9. Data Pagamento | 10. Confiança | 11. Ficheiro (link Drive) | 12. Nota
+        Adiciona uma nova linha de documento no registo principal alinhando dinamicamente com os cabeçalhos reais.
         """
         self.ensure_registo_sheet_exists()
         if doc_data.get("tipo_documento") == "Resumo de Lote" and doc_data.get("confianca") != "Baixa":
             print("  [Opção B PRD] Resumo de Lote registado no Supabase; omitida linha financeira no Sheets.")
             return True
 
-        row_values = [
-            str(doc_data.get("numero_documento") or ""),
-            str(doc_data.get("tipo_documento") or "A Rever"),
-            str(doc_data.get("fornecedor") or ""),
-            str(doc_data.get("farmacia") or "Indeterminado"),
-            str(doc_data.get("data_documento") or ""),
-            float(doc_data.get("valor_total") or 0.0) if doc_data.get("valor_total") is not None else 0.0,
-            str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""),
-            str(doc_data.get("estado_pagamento") or "Pendente"),
-            str(doc_data.get("data_pagamento") or ""),
-            str(doc_data.get("confianca") or "Baixa"),
-            str(drive_url or ""),
-            str(doc_data.get("nota") or "")
-        ]
+        # Ler o cabeçalho existente na folha para alinhar perfeitamente as colunas
+        existing_headers = self.get_sheet_headers("Registo")
+
+        mapping = {
+            "Nº Documento": str(doc_data.get("numero_documento") or ""),
+            "Tipo": str(doc_data.get("tipo_documento") or "A Rever"),
+            "Fornecedor": str(doc_data.get("fornecedor") or ""),
+            "Farmácia": str(doc_data.get("farmacia") or "Indeterminado"),
+            "Data": str(doc_data.get("data_documento") or ""),
+            "Valor (€)": float(doc_data.get("valor_total") or 0.0) if doc_data.get("valor_total") is not None else 0.0,
+            "Nº Lote Associado": str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""),
+            "Estado Pagamento": str(doc_data.get("estado_pagamento") or "Pendente"),
+            "Data Pagamento": str(doc_data.get("data_pagamento") or ""),
+            "Confiança": str(doc_data.get("confianca") or "Baixa"),
+            "Ficheiro": str(drive_url or ""),
+            "Ficheiro (link Drive)": str(drive_url or ""),
+            "Nota": str(doc_data.get("nota") or "")
+        }
+
+        if existing_headers:
+            row_values = []
+            for col in existing_headers:
+                col_clean = col.strip()
+                # Tratamento de sinónimos de cabeçalho
+                if "fatura" in col_clean.lower() or "ficheiro" in col_clean.lower() or "link" in col_clean.lower():
+                    row_values.append(str(drive_url or ""))
+                elif "lote" in col_clean.lower():
+                    row_values.append(str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""))
+                elif "confiança" in col_clean.lower() or "confianca" in col_clean.lower():
+                    row_values.append(str(doc_data.get("confianca") or "Baixa"))
+                elif "nota" in col_clean.lower() or "observa" in col_clean.lower():
+                    row_values.append(str(doc_data.get("nota") or ""))
+                else:
+                    row_values.append(mapping.get(col_clean, ""))
+        else:
+            row_values = [
+                str(doc_data.get("numero_documento") or ""),
+                str(doc_data.get("tipo_documento") or "A Rever"),
+                str(doc_data.get("fornecedor") or ""),
+                str(doc_data.get("farmacia") or "Indeterminado"),
+                str(doc_data.get("data_documento") or ""),
+                float(doc_data.get("valor_total") or 0.0) if doc_data.get("valor_total") is not None else 0.0,
+                str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""),
+                str(doc_data.get("estado_pagamento") or "Pendente"),
+                str(doc_data.get("data_pagamento") or ""),
+                str(doc_data.get("confianca") or "Baixa"),
+                str(drive_url or ""),
+                str(doc_data.get("nota") or "")
+            ]
 
         if self.is_offline:
             return self._append_local(doc_data, row_values, drive_url)
@@ -182,7 +229,7 @@ class SheetsService:
             body = {'values': [row_values]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range="'Registo'!A:L",
+                range="'Registo'!A:Z",
                 valueInputOption="USER_ENTERED",
                 insertDataOption="INSERT_ROWS",
                 body=body
@@ -228,7 +275,7 @@ class SheetsService:
                 "Estado Pagamento": r.get("estado_pagamento", "Pendente"),
                 "Data Pagamento": r.get("data_pagamento", ""),
                 "Confiança": r.get("confianca", "Baixa"),
-                "Ficheiro (link Drive)": r.get("drive_url", ""),
+                "Ficheiro": r.get("drive_url", ""),
                 "Nota": r.get("nota", "")
             })
 
