@@ -108,38 +108,38 @@ class SheetsService:
             [""],
             ["TOTAL FATURADO (€)", "TOTAL CREDITADO (€)", "TOTAL PAGO (€)", "TOTAL PENDENTE A PAGAR (€)", "DOCS A REVER (QTD)"],
             [
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!B:B; "Fatura")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!B:B; "Nota de Crédito")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!I:I; "Pago")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!B:B; "Fatura"; \'Registo\'!I:I; "Pendente") - SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!B:B; "Nota de Crédito"; \'Registo\'!I:I; "Pendente")',
-                '=CONTAR.SE(\'Registo\'!K:K; "Baixa")'
+                '=SOMA.SE.S(Registo!G:G; Registo!B:B; "Fatura")',
+                '=SOMA.SE.S(Registo!G:G; Registo!B:B; "Nota de Crédito")',
+                '=SOMA.SE.S(Registo!G:G; Registo!I:I; "Pago")',
+                '=SOMA.SE.S(Registo!G:G; Registo!B:B; "Fatura"; Registo!I:I; "Pendente") - SOMA.SE.S(Registo!G:G; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente")',
+                '=CONTAR.SE(Registo!K:K; "Baixa")'
             ],
             [""],
             ["RESUMO POR FARMÁCIA"],
             ["Farmácia", "Total Faturado (€)", "Notas de Crédito (€)", "Total Pago (€)", "Pendente A Pagar (€)", "Qtd Pendentes"],
             [
                 "Farmácia Baptista",
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!B:B; "Fatura")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!B:B; "Nota de Crédito")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!I:I; "Pago")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!B:B; "Fatura"; \'Registo\'!I:I; "Pendente") - SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!B:B; "Nota de Crédito"; \'Registo\'!I:I; "Pendente")',
-                '=CONTAR.SE.S(\'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!I:I; "Pendente")'
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Fatura")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Nota de Crédito")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!I:I; "Pago")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente") - SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente")',
+                '=CONTAR.SE.S(Registo!D:D; "Farmácia Baptista"; Registo!I:I; "Pendente")'
             ],
             [
                 "Farmácia Campeã",
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!B:B; "Fatura")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!B:B; "Nota de Crédito")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!I:I; "Pago")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!B:B; "Fatura"; \'Registo\'!I:I; "Pendente") - SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!B:B; "Nota de Crédito"; \'Registo\'!I:I; "Pendente")',
-                '=CONTAR.SE.S(\'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!I:I; "Pendente")'
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Fatura")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Nota de Crédito")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!I:I; "Pago")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente") - SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente")',
+                '=CONTAR.SE.S(Registo!D:D; "Farmácia Campeã"; Registo!I:I; "Pendente")'
             ],
             [
                 "Indeterminado / A Rever",
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Indeterminado"; \'Registo\'!B:B; "Fatura")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Indeterminado"; \'Registo\'!B:B; "Nota de Crédito")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Indeterminado"; \'Registo\'!I:I; "Pago")',
-                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Indeterminado"; \'Registo\'!B:B; "Fatura"; \'Registo\'!I:I; "Pendente")',
-                '=CONTAR.SE.S(\'Registo\'!D:D; "Indeterminado"; \'Registo\'!I:I; "Pendente")'
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Fatura")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Nota de Crédito")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!I:I; "Pago")',
+                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente")',
+                '=CONTAR.SE.S(Registo!D:D; "Indeterminado"; Registo!I:I; "Pendente")'
             ],
             [""],
             ["BALANÇO POR FORNECEDOR"],
@@ -151,9 +151,9 @@ class SheetsService:
             row_num = start_row + idx
             rows.append([
                 sup,
-                f'=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; A{row_num}; \'Registo\'!B:B; "Fatura")',
-                f'=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; A{row_num}; \'Registo\'!B:B; "Nota de Crédito")',
-                f'=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; A{row_num}; \'Registo\'!I:I; "Pago")',
+                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Fatura")',
+                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Nota de Crédito")',
+                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!I:I; "Pago")',
                 f'=B{row_num}-C{row_num}-D{row_num}'
             ])
         self.ensure_sheet_tab_exists("Resumo Financeiro", rows)
