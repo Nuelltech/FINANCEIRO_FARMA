@@ -8,7 +8,7 @@ class SheetsService:
     """
     Serviço de escrita nativa em Google Sheets via Google Sheets API v4.
     Requisito estrito do PRD: usa `values.append` para manter o ficheiro único e estável.
-    Gera automaticamente a aba 'Resumo Financeiro' (Dashboard dinâmico com fórmulas) e 'Log de Execuções'.
+    Gera e atualiza automaticamente a aba 'Resumo Financeiro' (Dashboard dinâmico) e 'Log de Execuções'.
     """
     def __init__(self, spreadsheet_id: str, credentials_json_path: str = None, local_excel_path: str = "output/relatorio_faturas.xlsx", local_json_path: str = "data/documentos.json"):
         self.spreadsheet_id = spreadsheet_id
@@ -73,7 +73,7 @@ class SheetsService:
                 ).execute()
 
                 if header_rows:
-                    self.service.spreadsheets().values().append(
+                    self.service.spreadsheets().values().update(
                         spreadsheetId=self.spreadsheet_id,
                         range=f"'{tab_name}'!A1",
                         valueInputOption="USER_ENTERED",
@@ -84,7 +84,7 @@ class SheetsService:
             print(f"Erro ao verificar/criar aba '{tab_name}': {e}")
 
     def ensure_resumo_sheet_exists(self):
-        """Cria e formata a aba 'Resumo Financeiro' com cartões de KPI e tabelas dinâmicas."""
+        """Cria e atualiza a aba 'Resumo Financeiro' com fórmulas dinâmicas do Google Sheets."""
         rows = [
             ["DASHBOARD DE CONTROLO FINANCEIRO - FARMÁCIAS PILOTO"],
             [""],
@@ -133,6 +133,18 @@ class SheetsService:
             ["Utilmédica", '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!I:I, "Pago")', '=B18-C18-D18']
         ]
         self.ensure_sheet_tab_exists("Resumo Financeiro", rows)
+        
+        # Atualizar fórmulas existentes para garantir que eventuais erros anteriores são corrigidos
+        if not self.is_offline and self.service:
+            try:
+                self.service.spreadsheets().values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Resumo Financeiro'!A1",
+                    valueInputOption="USER_ENTERED",
+                    body={'values': rows}
+                ).execute()
+            except Exception as e:
+                print(f"Aviso ao atualizar fórmulas da aba Resumo Financeiro: {e}")
 
     def ensure_log_sheet_exists(self):
         header = [[
@@ -148,7 +160,7 @@ class SheetsService:
         self.ensure_sheet_tab_exists("Log de Execuções", header)
 
     def ensure_registo_sheet_exists(self):
-        header = [[
+        header = [
             "Nº Documento",
             "Tipo",
             "Fornecedor",
@@ -162,8 +174,77 @@ class SheetsService:
             "Confiança",
             "Ficheiro",
             "Nota"
-        ]]
-        self.ensure_sheet_tab_exists("Registo", header)
+        ]
+        self.ensure_sheet_tab_exists("Registo", [header])
+        
+        # Garantir que a linha 1 da aba Registo tem os 13 cabeçalhos e migrar registos existentes se necessário
+        if not self.is_offline and self.service:
+            try:
+                res = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Registo'!A1:Z1000"
+                ).execute()
+                rows = res.get('values', [])
+                
+                if rows and len(rows) > 0:
+                    old_headers = [str(c).strip() for c in rows[0]]
+                    has_vencimento = any("vencimento" in h.lower() for h in old_headers)
+                    
+                    if not has_vencimento:
+                        print("  [GSheets API] A migrar aba 'Registo' para incluir coluna 'Data Vencimento'...")
+                        new_rows = [header]
+                        
+                        header_map = {}
+                        for idx, h in enumerate(old_headers):
+                            hl = h.lower()
+                            if "doc" in hl or "nº" in hl or "numero" in hl:
+                                if "lote" not in hl: header_map["Nº Documento"] = idx
+                            if "tipo" in hl: header_map["Tipo"] = idx
+                            if "fornecedor" in hl: header_map["Fornecedor"] = idx
+                            if "farmá" in hl or "farmacia" in hl: header_map["Farmácia"] = idx
+                            if "data" in hl and "vencimento" not in hl and "pagamento" not in hl: header_map["Data"] = idx
+                            if "valor" in hl: header_map["Valor (€)"] = idx
+                            if "lote" in hl: header_map["Nº Lote Associado"] = idx
+                            if "estado" in hl or ("pagamento" in hl and "data" not in hl): header_map["Estado Pagamento"] = idx
+                            if "data" in hl and "pagamento" in hl: header_map["Data Pagamento"] = idx
+                            if "confian" in hl or "confia" in hl: header_map["Confiança"] = idx
+                            if "ficheiro" in hl or "link" in hl: header_map["Ficheiro"] = idx
+                            if "nota" in hl or "observa" in hl: header_map["Nota"] = idx
+                        
+                        for r in rows[1:]:
+                            new_r = []
+                            for target in header:
+                                if target == "Data Vencimento":
+                                    data_i = header_map.get("Data")
+                                    val = r[data_i] if data_i is not None and data_i < len(r) else ""
+                                    new_r.append(val)
+                                else:
+                                    i = header_map.get(target)
+                                    val = r[i] if i is not None and i < len(r) else ""
+                                    new_r.append(val)
+                            new_rows.append(new_r)
+                        
+                        self.service.spreadsheets().values().clear(
+                            spreadsheetId=self.spreadsheet_id,
+                            range="'Registo'!A1:Z1000"
+                        ).execute()
+                        
+                        self.service.spreadsheets().values().update(
+                            spreadsheetId=self.spreadsheet_id,
+                            range="'Registo'!A1",
+                            valueInputOption="USER_ENTERED",
+                            body={'values': new_rows}
+                        ).execute()
+                        print("  [GSheets API] Aba 'Registo' migrada com sucesso para 13 colunas.")
+                    else:
+                        self.service.spreadsheets().values().update(
+                            spreadsheetId=self.spreadsheet_id,
+                            range="'Registo'!A1:M1",
+                            valueInputOption="USER_ENTERED",
+                            body={'values': [header]}
+                        ).execute()
+            except Exception as e:
+                print(f"Aviso ao atualizar cabeçalho da aba Registo: {e}")
 
     def get_sheet_headers(self, tab_name: str) -> list:
         """Obtém os nomes de colunas do cabeçalho da aba existente."""
