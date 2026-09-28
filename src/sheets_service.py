@@ -85,6 +85,24 @@ class SheetsService:
 
     def ensure_resumo_sheet_exists(self):
         """Cria e atualiza a aba 'Resumo Financeiro' com fórmulas dinâmicas do Google Sheets."""
+        default_suppliers = ["Cooprofar", "Alliance Healthcare", "NOS", "Realcópia", "Utilmédica"]
+        suppliers = list(default_suppliers)
+        
+        if not self.is_offline and self.service:
+            try:
+                res = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Registo'!C2:C1000"
+                ).execute()
+                cols = res.get('values', [])
+                for r in cols:
+                    if r and len(r) > 0:
+                        sup = str(r[0]).strip()
+                        if sup and sup not in suppliers and sup.lower() != "fornecedor":
+                            suppliers.append(sup)
+            except Exception as e:
+                print(f"Aviso ao ler fornecedores de Registo: {e}")
+
         rows = [
             ["DASHBOARD DE CONTROLO FINANCEIRO - FARMÁCIAS PILOTO"],
             [""],
@@ -125,13 +143,19 @@ class SheetsService:
             ],
             [""],
             ["BALANÇO POR FORNECEDOR"],
-            ["Fornecedor", "Faturas (€)", "Créditos (€)", "Já Pago (€)", "Pendente Atual (€)"],
-            ["Cooprofar", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Cooprofar"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Cooprofar"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Cooprofar"; \'Registo\'!I:I; "Pago")', '=B14-C14-D14'],
-            ["Alliance Healthcare", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Alliance Healthcare"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Alliance Healthcare"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Alliance Healthcare"; \'Registo\'!I:I; "Pago")', '=B15-C15-D15'],
-            ["NOS", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "NOS"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "NOS"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "NOS"; \'Registo\'!I:I; "Pago")', '=B16-C16-D16'],
-            ["Realcópia", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Realcópia"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Realcópia"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Realcópia"; \'Registo\'!I:I; "Pago")', '=B17-C17-D17'],
-            ["Utilmédica", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Utilmédica"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Utilmédica"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Utilmédica"; \'Registo\'!I:I; "Pago")', '=B18-C18-D18']
+            ["Fornecedor", "Faturas (€)", "Créditos (€)", "Já Pago (€)", "Pendente Atual (€)"]
         ]
+
+        start_row = 14
+        for idx, sup in enumerate(suppliers):
+            row_num = start_row + idx
+            rows.append([
+                sup,
+                f'=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; A{row_num}; \'Registo\'!B:B; "Fatura")',
+                f'=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; A{row_num}; \'Registo\'!B:B; "Nota de Crédito")',
+                f'=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; A{row_num}; \'Registo\'!I:I; "Pago")',
+                f'=B{row_num}-C{row_num}-D{row_num}'
+            ])
         self.ensure_sheet_tab_exists("Resumo Financeiro", rows)
         
         # Limpar fórmulas antigas com erro e reescrever fórmulas atualizadas
