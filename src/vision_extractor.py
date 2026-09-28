@@ -15,8 +15,8 @@ Sua tarefa é analisar o documento (fatura, nota de crédito, resumo de lote ou 
   "fornecedor": "string",
   "farmacia": "Farmácia Baptista | Farmácia Campeã | Indeterminado",
   "numero_documento": "string ou null",
-  "data_documento": "AAAA-MM-DD ou null",
-  "data_vencimento": "AAAA-MM-DD ou null (Data Limite de Pagamento)",
+  "data_documento": "AAAA-MM-DD ou null (Data de Emissão / Fatura)",
+  "data_vencimento": "AAAA-MM-DD ou null (Data Limite de Pagamento / Vencimento)",
   "valor_total": number ou null,
   "moeda": "EUR",
   "numero_lote": "string ou null (só Resumo de Lote)",
@@ -27,13 +27,14 @@ Sua tarefa é analisar o documento (fatura, nota de crédito, resumo de lote ou 
   "motivo_baixa_confianca": "string ou null"
 }
 
-REGRAS ESTRITAS:
+REGRAS ESTRITAS DE EXTRAÇÃO DE DATAS:
 1. Responda APENAS com o JSON válido, sem texto explicativo antes ou depois.
-2. Nomes de farmácia aceites: "Farmácia Baptista" ou "Farmácia Campeã". Se não for possível determinar com certeza, use "Indeterminado".
-3. Se a qualidade da imagem for má, se houver dúvida sobre dígitos, ou se faltar algum campo obrigatório (número, data, valor, fornecedor), defina "confianca": "baixa" e preencha "motivo_baixa_confianca".
-4. Para "data_vencimento", extraia a Data Limite de Pagamento ou Vencimento presente no documento. Se não estiver explícita, use a mesma data_documento ou null.
-5. Para "Resumo de Lote", inclua "numero_lote" e no array "faturas_agregadas" a lista das faturas individuais com números e valores.
-6. Moeda deve ser sempre "EUR". Datas no formato YYYY-MM-DD. Valores numéricos como float (ex: 1250.45).
+2. Distinga claramente a "data_documento" (Data de Emissão/Emitido em) da "data_vencimento" (Data Limite de Pagamento / Vencimento em).
+3. Para "data_vencimento", procure com extrema atenção por rótulos no documento como: "Vencimento em", "Data Vencimento", "Vencimento", "Data Limite de Pagamento", "Pagar até", "Venc.".
+4. Se o documento contiver uma Condição de Pagamento (ex: "Cond. de Pagamento: 45 Dias", "30 Dias", "60 Dias") e a data de vencimento não estiver escrita por extenso, CALCULE a data de vencimento somando esse número de dias à data_documento (exemplo: Emitido em 2026-09-10 com 45 Dias -> Vencimento em 2026-10-25).
+5. NUNCA assuma data_vencimento igual a data_documento se existir um prazo de vencimento futuro ou condição de pagamento diferente de Pronto Pagamento.
+6. Se for um "Resumo de Lote", inclua "numero_lote" e no array "faturas_agregadas" a lista das faturas individuais com números e valores.
+7. Moeda deve ser sempre "EUR". Datas no formato YYYY-MM-DD. Valores numéricos como float (ex: 1250.45).
 """
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -97,10 +98,9 @@ class VisionExtractor:
             })
         message_content.append({
             "type": "text",
-            "text": "Analise estas imagens do documento financeiro e extraia a informação estritamente de acordo com o esquema JSON pedido."
+            "text": "Analise estas imagens do documento financeiro e extraia a informação estritamente de acordo com o esquema JSON pedido, prestando especial atenção à 'data_vencimento' (ex: Vencimento em)."
         })
         
-        # Lista de candidatos identica à do trading-agent
         primary_model = os.getenv("CLAUDE_MODEL", "").strip() or "claude-3-5-sonnet-20240620"
         candidate_models = [
             primary_model,
@@ -151,6 +151,7 @@ class VisionExtractor:
             "farmacia": "Indeterminado",
             "numero_documento": None,
             "data_documento": None,
+            "data_vencimento": None,
             "valor_total": None,
             "moeda": "EUR",
             "numero_lote": None,
@@ -194,6 +195,7 @@ class VisionExtractor:
                 "farmacia": "Indeterminado",
                 "numero_documento": None,
                 "data_documento": None,
+                "data_vencimento": None,
                 "valor_total": None,
                 "moeda": "EUR",
                 "numero_lote": None,
@@ -203,6 +205,7 @@ class VisionExtractor:
             }
 
     def _heuristic_fallback(self, pdf_path: str) -> dict:
+        import datetime
         doc = pymupdf.open(pdf_path)
         text = ""
         for page in doc:
@@ -235,6 +238,30 @@ class VisionExtractor:
         date_match = re.search(r'202\d-\d{2}-\d{2}', filename)
         data_doc = date_match.group(0) if date_match else None
 
+        # Procurar data de vencimento explícita no texto (ex: Vencimento em: 2026-10-25)
+        venc_match = re.search(r'(?:vencimento|venc\.?|pagar\s+at[é|e]|data\s+limite)(?:\s+em)?\s*:?\s*(\d{4}[-\/\.]\d{2}[-\/\.]\d{2}|\d{2}[-\/\.]\d{2}[-\/\.]\d{4})', text, re.IGNORECASE)
+        data_venc = None
+        if venc_match:
+            raw_venc = venc_match.group(1).replace(".", "-").replace("/", "-")
+            parts = raw_venc.split("-")
+            if len(parts) == 3:
+                if len(parts[0]) == 2 and len(parts[2]) == 4:
+                    data_venc = f"{parts[2]}-{parts[1]}-{parts[0]}"
+                else:
+                    data_venc = raw_venc
+
+        # Se não houver data explícita, procurar por Condição de Pagamento (ex: 45 Dias)
+        if not data_venc and data_doc:
+            cond_match = re.search(r'cond\.?\s+(?:de\s+)?pagamento\s*:?\s*(\d+)\s*dias', text, re.IGNORECASE)
+            if cond_match:
+                days = int(cond_match.group(1))
+                try:
+                    doc_dt = datetime.datetime.strptime(data_doc, "%Y-%m-%d")
+                    venc_dt = doc_dt + datetime.timedelta(days=days)
+                    data_venc = venc_dt.strftime("%Y-%m-%d")
+                except Exception:
+                    data_venc = data_doc
+
         val_match = re.search(r'TOTAL\s*:?\s*([\d\.\,]+)', text_upper)
         valor_total = float(val_match.group(1).replace(".", "").replace(",", ".")) if val_match else None
 
@@ -247,6 +274,7 @@ class VisionExtractor:
             "farmacia": farmacia,
             "numero_documento": num_doc,
             "data_documento": data_doc,
+            "data_vencimento": data_venc or data_doc,
             "valor_total": valor_total,
             "moeda": "EUR",
             "numero_lote": None,
