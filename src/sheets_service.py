@@ -24,7 +24,7 @@ class SheetsService:
                 creds = service_account.Credentials.from_service_account_info(
                     info, scopes=['https://www.googleapis.com/auth/spreadsheets']
                 )
-                self.service = build('sheets', '4', credentials=creds)
+                self.service = build('sheets', 'v4', credentials=creds)
                 self.is_offline = False
                 print("Google Sheets API v4 autenticada com sucesso (via ENV JSON).")
             except Exception as e:
@@ -35,7 +35,7 @@ class SheetsService:
                 creds = service_account.Credentials.from_service_account_file(
                     credentials_json_path, scopes=['https://www.googleapis.com/auth/spreadsheets']
                 )
-                self.service = build('sheets', '4', credentials=creds)
+                self.service = build('sheets', 'v4', credentials=creds)
                 self.is_offline = False
                 print(f"Google Sheets API v4 autenticada com sucesso (via {credentials_json_path}).")
             except Exception as e:

@@ -96,8 +96,9 @@ class VisionExtractor:
             "text": "Analise estas imagens do documento financeiro e extraia a informação estritamente de acordo com o esquema JSON pedido."
         })
         
+        model_name = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
         response = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model=model_name,
             max_tokens=2048,
             system=system_prompt,
             messages=[{"role": "user", "content": content}]

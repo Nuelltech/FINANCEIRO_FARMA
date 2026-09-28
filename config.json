@@ -7,6 +7,6 @@
   "languages": ["pt"],
   "naming_format": "{fornecedor}_{farmacia}_{data}_{num_doc}.pdf",
   "llm_provider": "anthropic",
-  "claude_model": "claude-3-5-sonnet-20241022",
+  "claude_model": "claude-3-5-sonnet-latest",
   "gemini_model": "gemini-1.5-flash"
 }
