@@ -5,7 +5,9 @@ on:
     # Execução diária às 08:00 UTC (reutilizando padrão Vigilante/Analista)
     - cron: '0 8 * * *'
   workflow_dispatch:
-    # Permite execução manual a qualquer momento via GitHub UI
+    # Permite execução manual a qualquer momento via GitHub UI ou API
+  repository_dispatch:
+    types: [run-pipeline]
 
 jobs:
   run-pipeline:
