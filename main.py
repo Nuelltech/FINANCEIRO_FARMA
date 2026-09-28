@@ -37,32 +37,25 @@ def load_config() -> dict:
 def load_instructions(gdrive_service: GDriveService) -> tuple:
     """
     Carrega os prompts e instruções de negócio.
-    Tenta descarregar dinamicamente dos Google Docs em _Config Agente.
-    Se falhar, recorre aos ficheiros TXT locais de segurança e sinaliza no log.
+    Sincroniza automaticamente as novas regras no Google Doc em _Config Agente.
     """
-    print("\n[0/4] A carregar instruções e prompt do Agente...")
+    print("\n[0/4] A carregar e sincronizar instruções do Agente...")
+    
+    from src.vision_extractor import DEFAULT_SYSTEM_PROMPT
+    
+    # Sincronizar automaticamente o Google Doc em _Config Agente com o prompt mais recente
+    if not gdrive_service.is_offline and gdrive_service.service:
+        gdrive_service.update_google_doc_text(PROMPT_EXTRACAO_DOC_ID, DEFAULT_SYSTEM_PROMPT)
+
     try:
         prompt_text = gdrive_service.export_google_doc_text(PROMPT_EXTRACAO_DOC_ID)
         context_text = gdrive_service.export_google_doc_text(CONTEXTO_INSTRUCION_DOC_ID)
         origem = "Google Docs (_Config Agente)"
-        print("  [Sucesso] Instruções carregadas dinamicamente a partir do Google Docs.")
+        print("  [Sucesso] Instruções sincronizadas e carregadas a partir do Google Docs.")
         return prompt_text, context_text, origem
     except Exception as e:
-        print(f"  [Aviso] Falha ao ler Google Docs ({e}). A recorrer aos ficheiros TXT locais de segurança...")
-        prompt_path = os.path.join(BASE_DIR, "data", "prompt_extracao.txt")
-        context_path = os.path.join(BASE_DIR, "data", "contexto_instrucoes.txt")
-        
-        prompt_text = ""
-        context_text = ""
-        if os.path.exists(prompt_path):
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                prompt_text = f.read()
-        if os.path.exists(context_path):
-            with open(context_path, "r", encoding="utf-8") as f:
-                context_text = f.read()
-                
-        origem = "⚠️ RECURSO A FICHEIROS TXT LOCAIS (Fallback)"
-        return prompt_text, context_text, origem
+        print(f"  [Aviso] Falha ao ler Google Docs ({e}). A recorrer às instruções nativas do sistema...")
+        return DEFAULT_SYSTEM_PROMPT, "", "Instruções Nativas do Agente"
 
 def run_pipeline():
     print("=" * 80)

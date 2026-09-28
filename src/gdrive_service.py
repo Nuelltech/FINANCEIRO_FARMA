@@ -59,6 +59,23 @@ class GDriveService:
         except Exception as e:
             raise RuntimeError(f"Falha ao exportar Google Doc {doc_id}: {e}")
 
+    def update_google_doc_text(self, doc_id: str, new_text: str) -> bool:
+        """Atualiza o conteúdo de um documento Google Doc na pasta _Config Agente."""
+        if self.is_offline or not self.service:
+            return False
+        try:
+            from googleapiclient.http import MediaInMemoryUpload
+            media = MediaInMemoryUpload(new_text.encode('utf-8'), mimetype='text/plain')
+            self.service.files().update(
+                fileId=doc_id,
+                media_body=media
+            ).execute()
+            print(f"  [GDrive API] Google Doc '{doc_id}' em _Config Agente sincronizado com sucesso.")
+            return True
+        except Exception as e:
+            print(f"  [Aviso GDrive API] Não foi possível atualizar Google Doc '{doc_id}': {e}")
+            return False
+
     def list_new_files(self) -> list:
         """
         Lista os ficheiros PDF novos na pasta raiz do Drive.
