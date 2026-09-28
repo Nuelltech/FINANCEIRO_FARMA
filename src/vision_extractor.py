@@ -3,6 +3,7 @@ import json
 import base64
 import re
 from io import BytesIO
+import requests
 import pymupdf
 from PIL import Image
 
@@ -33,15 +34,21 @@ REGRAS ESTRITAS:
 5. Moeda deve ser sempre "EUR". Datas no formato YYYY-MM-DD. Valores numéricos como float (ex: 1250.45).
 """
 
+ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+
 class VisionExtractor:
     """
-    Extrator Multimodal com Visão LLM (Claude 3.5 Sonnet / Gemini 1.5).
-    Suporta prompt dinâmico descarregado em tempo de execução do Google Docs.
+    Extrator Multimodal com Visão LLM (Claude REST API nativa / Gemini 1.5).
+    Implementado com a mesma arquitetura REST direta do projeto trading-agent (claude_analyzer.py).
     """
     def __init__(self, provider: str = "anthropic"):
         self.provider = provider.lower()
-        self.anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-        self.gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        self.anthropic_key = (
+            os.getenv("ANTHROPIC_API_KEY", "").strip() or 
+            os.getenv("ANTHROPIC_API_KEY_FARMA", "").strip() or 
+            os.getenv("ANTHROPIC_API_KEY_TRADING", "").strip()
+        )
+        self.gemini_key = (os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip())
 
     def pdf_to_base64_images(self, pdf_path: str, dpi: int = 150) -> list:
         """Converte cada página do PDF numa imagem PNG codificada em Base64."""
@@ -60,30 +67,25 @@ class VisionExtractor:
         return images
 
     def extract_from_pdf(self, pdf_path: str, system_prompt: str = None) -> dict:
-        """Processa o PDF através de Visão LLM usando o system prompt dinâmico."""
+        """Processa o PDF através de Visão LLM usando a API REST nativa."""
         prompt_to_use = system_prompt or DEFAULT_SYSTEM_PROMPT
         filename = os.path.basename(pdf_path)
         
-        if self.provider == "anthropic" and self.anthropic_key:
-            return self._extract_with_claude(pdf_path, prompt_to_use)
-        elif self.provider == "gemini" and self.gemini_key:
-            return self._extract_with_gemini(pdf_path, prompt_to_use)
-        elif self.anthropic_key:
-            return self._extract_with_claude(pdf_path, prompt_to_use)
+        if self.anthropic_key:
+            return self._extract_with_claude_rest(pdf_path, prompt_to_use)
         elif self.gemini_key:
             return self._extract_with_gemini(pdf_path, prompt_to_use)
         else:
             print(f"  [Aviso] Nenhuma API Key de LLM encontrada. A usar extrator heurístico/mock para {filename}.")
             return self._heuristic_fallback(pdf_path)
 
-    def _extract_with_claude(self, pdf_path: str, system_prompt: str) -> dict:
-        import anthropic
-        client = anthropic.Anthropic(api_key=self.anthropic_key)
+    def _extract_with_claude_rest(self, pdf_path: str, system_prompt: str) -> dict:
+        """Chamada REST nativa idêntica ao módulo claude_analyzer.py do trading-agent."""
         images_b64 = self.pdf_to_base64_images(pdf_path)
         
-        content = []
+        message_content = []
         for b64_img in images_b64:
-            content.append({
+            message_content.append({
                 "type": "image",
                 "source": {
                     "type": "base64",
@@ -91,43 +93,69 @@ class VisionExtractor:
                     "data": b64_img
                 }
             })
-        content.append({
+        message_content.append({
             "type": "text",
             "text": "Analise estas imagens do documento financeiro e extraia a informação estritamente de acordo com o esquema JSON pedido."
         })
         
-        models_to_try = [
-            os.getenv("CLAUDE_MODEL"),
+        # Lista de candidatos identica à do trading-agent
+        primary_model = os.getenv("CLAUDE_MODEL", "").strip() or "claude-3-5-sonnet-20240620"
+        candidate_models = [
+            primary_model,
             "claude-3-5-sonnet-20240620",
+            "claude-sonnet-4-6",
             "claude-3-7-sonnet-20250219",
-            "claude-3-haiku-20240307",
-            "claude-3-opus-20240229"
+            "claude-3-haiku-20240307"
         ]
-        # Filtrar None e duplicados mantendo a ordem
-        seen = set()
-        clean_models = []
-        for m in models_to_try:
-            if m and m not in seen:
-                seen.add(m)
-                clean_models.append(m)
+        
+        models_to_try = []
+        for m in candidate_models:
+            if m and m not in models_to_try:
+                models_to_try.append(m)
 
-        last_error = None
-        for m_name in clean_models:
+        headers = {
+            "x-api-key": self.anthropic_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+
+        last_error_msg = ""
+        for target_model in models_to_try:
+            payload = {
+                "model": target_model,
+                "max_tokens": 2048,
+                "system": system_prompt,
+                "messages": [
+                    {"role": "user", "content": message_content}
+                ]
+            }
+
             try:
-                response = client.messages.create(
-                    model=m_name,
-                    max_tokens=2048,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": content}]
-                )
-                raw_text = response.content[0].text
-                return self._parse_json_response(raw_text, pdf_path)
+                res = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload, timeout=90)
+                if res.status_code == 200:
+                    data = res.json()
+                    raw_text = data["content"][0]["text"]
+                    return self._parse_json_response(raw_text, pdf_path)
+                else:
+                    print(f"  [Aviso Anthropic REST] Modelo '{target_model}' devolveu Status {res.status_code}: {res.text}")
+                    last_error_msg = f"HTTP {res.status_code}: {res.text}"
             except Exception as e:
-                print(f"  [Aviso Anthropic] Modelo '{m_name}' indisponível ({e}). A tentar próximo modelo...")
-                last_error = e
+                print(f"  [Aviso Anthropic REST] Exceção ao chamar modelo '{target_model}': {e}")
+                last_error_msg = str(e)
 
-        if last_error:
-            raise last_error
+        return {
+            "tipo_documento": "Outro",
+            "fornecedor": "DESCONHECIDO",
+            "farmacia": "Indeterminado",
+            "numero_documento": None,
+            "data_documento": None,
+            "valor_total": None,
+            "moeda": "EUR",
+            "numero_lote": None,
+            "faturas_agregadas": [],
+            "confianca": "baixa",
+            "motivo_baixa_confianca": f"Falha nas chamadas REST da Anthropic API: {last_error_msg}"
+        }
 
     def _extract_with_gemini(self, pdf_path: str, system_prompt: str) -> dict:
         from google import genai
@@ -151,7 +179,6 @@ class VisionExtractor:
         return self._parse_json_response(response.text, pdf_path)
 
     def _parse_json_response(self, raw_text: str, pdf_path: str) -> dict:
-        """Extrai e limpa a resposta JSON da resposta do LLM."""
         try:
             cleaned = re.sub(r'```json\s*', '', raw_text)
             cleaned = re.sub(r'```\s*$', '', cleaned).strip()
@@ -174,7 +201,6 @@ class VisionExtractor:
             }
 
     def _heuristic_fallback(self, pdf_path: str) -> dict:
-        """Fallback local por texto/regex para simulação quando não há chaves de API ligadas."""
         doc = pymupdf.open(pdf_path)
         text = ""
         for page in doc:
