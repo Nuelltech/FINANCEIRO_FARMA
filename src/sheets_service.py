@@ -8,7 +8,7 @@ class SheetsService:
     """
     Serviço de escrita nativa em Google Sheets via Google Sheets API v4.
     Requisito estrito do PRD: usa `values.append` para manter o ficheiro único e estável.
-    Alinha automaticamente os dados com as colunas reais do cabeçalho para evitar desfasamento.
+    Gera automaticamente a aba 'Resumo Financeiro' (Dashboard dinâmico com fórmulas) e 'Log de Execuções'.
     """
     def __init__(self, spreadsheet_id: str, credentials_json_path: str = None, local_excel_path: str = "output/relatorio_faturas.xlsx", local_json_path: str = "data/documentos.json"):
         self.spreadsheet_id = spreadsheet_id
@@ -37,14 +37,14 @@ class SheetsService:
                 )
                 self.service = build('sheets', 'v4', credentials=creds)
                 self.is_offline = False
-                print(f"Erro ao autenticar GSheets com ficheiro {credentials_json_path}: {e}")
+                print(f"Google Sheets API v4 autenticada com sucesso (via {credentials_json_path}).")
             except Exception as e:
                 print(f"Erro ao autenticar GSheets com ficheiro {credentials_json_path}: {e}")
 
         if self.is_offline:
             print("Google Sheets API a funcionar em modo offline (Excel/JSON locais).")
 
-    def ensure_sheet_tab_exists(self, tab_name: str, header_row: list):
+    def ensure_sheet_tab_exists(self, tab_name: str, header_rows: list):
         """Garante que uma aba específica existe no Google Sheets; cria-a com cabeçalhos se necessário."""
         if self.is_offline or not self.service:
             return
@@ -72,19 +72,70 @@ class SheetsService:
                     body=batch_update_request
                 ).execute()
 
-                if header_row:
+                if header_rows:
                     self.service.spreadsheets().values().append(
                         spreadsheetId=self.spreadsheet_id,
                         range=f"'{tab_name}'!A1",
                         valueInputOption="USER_ENTERED",
-                        body={'values': [header_row]}
+                        body={'values': header_rows}
                     ).execute()
-                print(f"  [GSheets API] Aba '{tab_name}' criada com cabeçalhos com sucesso.")
+                print(f"  [GSheets API] Aba '{tab_name}' criada com sucesso.")
         except Exception as e:
             print(f"Erro ao verificar/criar aba '{tab_name}': {e}")
 
+    def ensure_resumo_sheet_exists(self):
+        """Cria e formata a aba 'Resumo Financeiro' com cartões de KPI e tabelas dinâmicas."""
+        rows = [
+            ["DASHBOARD DE CONTROLO FINANCEIRO - FARMÁCIAS PILOTO"],
+            [""],
+            ["TOTAL FATURADO (€)", "TOTAL CREDITADO (€)", "TOTAL PAGO (€)", "TOTAL PENDENTE A PAGAR (€)", "DOCS A REVER (QTD)"],
+            [
+                '=SUMIFS(Registo!G:G, Registo!B:B, "Fatura")',
+                '=SUMIFS(Registo!G:G, Registo!B:B, "Nota de Crédito")',
+                '=SUMIFS(Registo!G:G, Registo!I:I, "Pago")',
+                '=SUMIFS(Registo!G:G, Registo!B:B, "Fatura", Registo!I:I, "Pendente") - SUMIFS(Registo!G:G, Registo!B:B, "Nota de Crédito", Registo!I:I, "Pendente")',
+                '=COUNTIF(Registo!K:K, "Baixa")'
+            ],
+            [""],
+            ["RESUMO POR FARMÁCIA"],
+            ["Farmácia", "Total Faturado (€)", "Notas de Crédito (€)", "Total Pago (€)", "Pendente A Pagar (€)", "Qtd Pendentes"],
+            [
+                "Farmácia Baptista",
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!B:B, "Fatura")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!B:B, "Nota de Crédito")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!I:I, "Pago")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!B:B, "Fatura", Registo!I:I, "Pendente") - SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!B:B, "Nota de Crédito", Registo!I:I, "Pendente")',
+                '=COUNTIFS(Registo!D:D, "Farmácia Baptista", Registo!I:I, "Pendente")'
+            ],
+            [
+                "Farmácia Campeã",
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!B:B, "Fatura")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!B:B, "Nota de Crédito")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!I:I, "Pago")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!B:B, "Fatura", Registo!I:I, "Pendente") - SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!B:B, "Nota de Crédito", Registo!I:I, "Pendente")',
+                '=COUNTIFS(Registo!D:D, "Farmácia Campeã", Registo!I:I, "Pendente")'
+            ],
+            [
+                "Indeterminado / A Rever",
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Indeterminado", Registo!B:B, "Fatura")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Indeterminado", Registo!B:B, "Nota de Crédito")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Indeterminado", Registo!I:I, "Pago")',
+                '=SUMIFS(Registo!G:G, Registo!D:D, "Indeterminado", Registo!B:B, "Fatura", Registo!I:I, "Pendente")',
+                '=COUNTIFS(Registo!D:D, "Indeterminado", Registo!I:I, "Pendente")'
+            ],
+            [""],
+            ["BALANÇO POR FORNECEDOR"],
+            ["Fornecedor", "Faturas (€)", "Créditos (€)", "Já Pago (€)", "Pendente Atual (€)"],
+            ["Cooprofar", '=SUMIFS(Registo!G:G, Registo!C:C, "Cooprofar", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Cooprofar", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Cooprofar", Registo!I:I, "Pago")', '=B14-C14-D14'],
+            ["Alliance Healthcare", '=SUMIFS(Registo!G:G, Registo!C:C, "Alliance Healthcare", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Alliance Healthcare", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Alliance Healthcare", Registo!I:I, "Pago")', '=B15-C15-D15'],
+            ["NOS", '=SUMIFS(Registo!G:G, Registo!C:C, "NOS", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "NOS", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "NOS", Registo!I:I, "Pago")', '=B16-C16-D16'],
+            ["Realcópia", '=SUMIFS(Registo!G:G, Registo!C:C, "Realcópia", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Realcópia", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Realcópia", Registo!I:I, "Pago")', '=B17-C17-D17'],
+            ["Utilmédica", '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!I:I, "Pago")', '=B18-C18-D18']
+        ]
+        self.ensure_sheet_tab_exists("Resumo Financeiro", rows)
+
     def ensure_log_sheet_exists(self):
-        header = [
+        header = [[
             "Data/Hora Execução (UTC)",
             "Total Processados",
             "Confiança Alta",
@@ -93,16 +144,17 @@ class SheetsService:
             "Total Pendente (€)",
             "Origem Instruções",
             "Notas / Resumo"
-        ]
+        ]]
         self.ensure_sheet_tab_exists("Log de Execuções", header)
 
     def ensure_registo_sheet_exists(self):
-        header = [
+        header = [[
             "Nº Documento",
             "Tipo",
             "Fornecedor",
             "Farmácia",
             "Data",
+            "Data Vencimento",
             "Valor (€)",
             "Nº Lote Associado",
             "Estado Pagamento",
@@ -110,7 +162,7 @@ class SheetsService:
             "Confiança",
             "Ficheiro",
             "Nota"
-        ]
+        ]]
         self.ensure_sheet_tab_exists("Registo", header)
 
     def get_sheet_headers(self, tab_name: str) -> list:
@@ -132,6 +184,7 @@ class SheetsService:
     def append_execution_log(self, log_data: dict) -> bool:
         """Regista uma linha de auditoria na aba 'Log de Execuções'."""
         self.ensure_log_sheet_exists()
+        self.ensure_resumo_sheet_exists()
 
         row_values = [
             str(log_data.get("timestamp_utc") or ""),
@@ -168,12 +221,15 @@ class SheetsService:
         Adiciona uma nova linha de documento no registo principal alinhando dinamicamente com os cabeçalhos reais.
         """
         self.ensure_registo_sheet_exists()
+        self.ensure_resumo_sheet_exists()
+
         if doc_data.get("tipo_documento") == "Resumo de Lote" and doc_data.get("confianca") != "Baixa":
             print("  [Opção B PRD] Resumo de Lote registado no Supabase; omitida linha financeira no Sheets.")
             return True
 
-        # Ler o cabeçalho existente na folha para alinhar perfeitamente as colunas
         existing_headers = self.get_sheet_headers("Registo")
+
+        data_venc = str(doc_data.get("data_vencimento") or doc_data.get("data_documento") or "")
 
         mapping = {
             "Nº Documento": str(doc_data.get("numero_documento") or ""),
@@ -181,6 +237,7 @@ class SheetsService:
             "Fornecedor": str(doc_data.get("fornecedor") or ""),
             "Farmácia": str(doc_data.get("farmacia") or "Indeterminado"),
             "Data": str(doc_data.get("data_documento") or ""),
+            "Data Vencimento": data_venc,
             "Valor (€)": float(doc_data.get("valor_total") or 0.0) if doc_data.get("valor_total") is not None else 0.0,
             "Nº Lote Associado": str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""),
             "Estado Pagamento": str(doc_data.get("estado_pagamento") or "Pendente"),
@@ -195,11 +252,12 @@ class SheetsService:
             row_values = []
             for col in existing_headers:
                 col_clean = col.strip()
-                # Tratamento de sinónimos de cabeçalho
                 if "fatura" in col_clean.lower() or "ficheiro" in col_clean.lower() or "link" in col_clean.lower():
                     row_values.append(str(drive_url or ""))
                 elif "lote" in col_clean.lower():
                     row_values.append(str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""))
+                elif "vencimento" in col_clean.lower() or "limite" in col_clean.lower():
+                    row_values.append(data_venc)
                 elif "confiança" in col_clean.lower() or "confianca" in col_clean.lower():
                     row_values.append(str(doc_data.get("confianca") or "Baixa"))
                 elif "nota" in col_clean.lower() or "observa" in col_clean.lower():
@@ -213,6 +271,7 @@ class SheetsService:
                 str(doc_data.get("fornecedor") or ""),
                 str(doc_data.get("farmacia") or "Indeterminado"),
                 str(doc_data.get("data_documento") or ""),
+                data_venc,
                 float(doc_data.get("valor_total") or 0.0) if doc_data.get("valor_total") is not None else 0.0,
                 str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""),
                 str(doc_data.get("estado_pagamento") or "Pendente"),
@@ -270,6 +329,7 @@ class SheetsService:
                 "Fornecedor": r.get("fornecedor", ""),
                 "Farmácia": r.get("farmacia", ""),
                 "Data": r.get("data_documento", ""),
+                "Data Vencimento": r.get("data_vencimento", r.get("data_documento", "")),
                 "Valor (€)": r.get("valor_total", 0.0),
                 "Nº Lote Associado": r.get("numero_lote_associado", r.get("numero_lote", "")),
                 "Estado Pagamento": r.get("estado_pagamento", "Pendente"),

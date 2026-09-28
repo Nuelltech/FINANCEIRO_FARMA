@@ -16,6 +16,7 @@ Sua tarefa é analisar o documento (fatura, nota de crédito, resumo de lote ou 
   "farmacia": "Farmácia Baptista | Farmácia Campeã | Indeterminado",
   "numero_documento": "string ou null",
   "data_documento": "AAAA-MM-DD ou null",
+  "data_vencimento": "AAAA-MM-DD ou null (Data Limite de Pagamento)",
   "valor_total": number ou null,
   "moeda": "EUR",
   "numero_lote": "string ou null (só Resumo de Lote)",
@@ -30,8 +31,9 @@ REGRAS ESTRITAS:
 1. Responda APENAS com o JSON válido, sem texto explicativo antes ou depois.
 2. Nomes de farmácia aceites: "Farmácia Baptista" ou "Farmácia Campeã". Se não for possível determinar com certeza, use "Indeterminado".
 3. Se a qualidade da imagem for má, se houver dúvida sobre dígitos, ou se faltar algum campo obrigatório (número, data, valor, fornecedor), defina "confianca": "baixa" e preencha "motivo_baixa_confianca".
-4. Para "Resumo de Lote", inclua "numero_lote" e no array "faturas_agregadas" a lista das faturas individuais com números e valores.
-5. Moeda deve ser sempre "EUR". Datas no formato YYYY-MM-DD. Valores numéricos como float (ex: 1250.45).
+4. Para "data_vencimento", extraia a Data Limite de Pagamento ou Vencimento presente no documento. Se não estiver explícita, use a mesma data_documento ou null.
+5. Para "Resumo de Lote", inclua "numero_lote" e no array "faturas_agregadas" a lista das faturas individuais com números e valores.
+6. Moeda deve ser sempre "EUR". Datas no formato YYYY-MM-DD. Valores numéricos como float (ex: 1250.45).
 """
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
