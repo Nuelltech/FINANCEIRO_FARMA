@@ -8,7 +8,7 @@ class SheetsService:
     """
     Serviço de escrita nativa em Google Sheets via Google Sheets API v4.
     Requisito estrito do PRD: usa `values.append` para manter o ficheiro único e estável.
-    Possui fallback para exportação local Excel/JSON quando executado offline.
+    Suporta o registo auditável na aba `Log de Execuções` (gerada automaticamente se não existir).
     """
     def __init__(self, spreadsheet_id: str, credentials_json_path: str = None, local_excel_path: str = "output/relatorio_faturas.xlsx", local_json_path: str = "data/documentos.json"):
         self.spreadsheet_id = spreadsheet_id
@@ -44,13 +44,97 @@ class SheetsService:
         if self.is_offline:
             print("Google Sheets API a funcionar em modo offline (Excel/JSON locais).")
 
+    def ensure_log_sheet_exists(self):
+        """Garante que a aba 'Log de Execuções' existe no Google Sheets; cria-a se necessário."""
+        if self.is_offline or not self.service:
+            return
+
+        try:
+            spreadsheet = self.service.spreadsheets().get(spreadsheetId=self.spreadsheet_id).execute()
+            sheets = spreadsheet.get('sheets', [])
+            sheet_names = [s.get('properties', {}).get('title') for s in sheets]
+
+            if "Log de Execuções" not in sheet_names:
+                print("  [GSheets API] Aba 'Log de Execuções' não encontrada. A criar nova aba...")
+                batch_update_request = {
+                    'requests': [
+                        {
+                            'addSheet': {
+                                'properties': {
+                                    'title': 'Log de Execuções'
+                                }
+                            }
+                        }
+                    ]
+                }
+                self.service.spreadsheets().batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body=batch_update_request
+                ).execute()
+
+                # Adicionar cabeçalhos
+                header_row = [
+                    "Data/Hora Execução (UTC)",
+                    "Total Processados",
+                    "Confiança Alta",
+                    "Confiança Média",
+                    "Confiança Baixa (A Rever)",
+                    "Total Pendente (€)",
+                    "Origem Instruções",
+                    "Notas / Resumo"
+                ]
+                self.service.spreadsheets().values().append(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Log de Execuções'!A:H",
+                    valueInputOption="USER_ENTERED",
+                    body={'values': [header_row]}
+                ).execute()
+                print("  [GSheets API] Aba 'Log de Execuções' criada com cabeçalhos com sucesso.")
+        except Exception as e:
+            print(f"Erro ao verificar/criar aba 'Log de Execuções': {e}")
+
+    def append_execution_log(self, log_data: dict) -> bool:
+        """
+        Regista uma linha de auditoria na aba 'Log de Execuções' no final da execução.
+        """
+        self.ensure_log_sheet_exists()
+
+        row_values = [
+            str(log_data.get("timestamp_utc") or ""),
+            int(log_data.get("total_processados") or 0),
+            int(log_data.get("qtd_alta") or 0),
+            int(log_data.get("qtd_media") or 0),
+            int(log_data.get("qtd_baixa") or 0),
+            float(log_data.get("total_pendente") or 0.0),
+            str(log_data.get("origem_instrucoes") or "Google Docs (_Config Agente)"),
+            str(log_data.get("resumo_notas") or "")
+        ]
+
+        if self.is_offline or not self.service:
+            print(f"  [Local Fallback] Registo de Execução em log local: {row_values}")
+            return True
+
+        try:
+            body = {'values': [row_values]}
+            self.service.spreadsheets().values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Log de Execuções'!A:H",
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body=body
+            ).execute()
+            print("  [GSheets API] Linha de log de execução registada na aba 'Log de Execuções'.")
+            return True
+        except Exception as e:
+            print(f"Erro ao registar log de execução no GSheets API: {e}")
+            return False
+
     def append_document_row(self, doc_data: dict, drive_url: str) -> bool:
         """
         Adiciona uma nova linha de documento no registo principal sem nunca recriar a folha.
         Colunas:
         1. Nº Documento | 2. Tipo | 3. Fornecedor | 4. Farmácia | 5. Data | 6. Valor (€) | 7. Nº Lote Associado | 8. Estado Pagamento | 9. Data Pagamento | 10. Confiança | 11. Ficheiro (link Drive) | 12. Nota
         """
-        # Se for um Resumo de Lote e não houver erro, NÃO adiciona linha financeira no Sheets (Regra Opção B do PRD)
         if doc_data.get("tipo_documento") == "Resumo de Lote" and doc_data.get("confianca") != "Baixa":
             print("  [Opção B PRD] Resumo de Lote registado no Supabase; omitida linha financeira no Sheets.")
             return True
@@ -62,7 +146,7 @@ class SheetsService:
             str(doc_data.get("farmacia") or "Indeterminado"),
             str(doc_data.get("data_documento") or ""),
             float(doc_data.get("valor_total") or 0.0) if doc_data.get("valor_total") is not None else 0.0,
-            str(doc_data.get("numero_lote_associado") or ""),
+            str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""),
             str(doc_data.get("estado_pagamento") or "Pendente"),
             str(doc_data.get("data_pagamento") or ""),
             str(doc_data.get("confianca") or "Baixa"),
@@ -93,7 +177,6 @@ class SheetsService:
         os.makedirs(os.path.dirname(self.local_json_path), exist_ok=True)
         os.makedirs(os.path.dirname(self.local_excel_path), exist_ok=True)
 
-        # Atualizar JSON
         records = []
         if os.path.exists(self.local_json_path):
             try:
@@ -109,7 +192,6 @@ class SheetsService:
         with open(self.local_json_path, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
 
-        # Atualizar Excel Único
         table_rows = []
         for r in records:
             if r.get("tipo_documento") == "Resumo de Lote" and r.get("confianca") != "Baixa":
@@ -121,7 +203,7 @@ class SheetsService:
                 "Farmácia": r.get("farmacia", ""),
                 "Data": r.get("data_documento", ""),
                 "Valor (€)": r.get("valor_total", 0.0),
-                "Nº Lote Associado": r.get("numero_lote_associado", ""),
+                "Nº Lote Associado": r.get("numero_lote_associado", r.get("numero_lote", "")),
                 "Estado Pagamento": r.get("estado_pagamento", "Pendente"),
                 "Data Pagamento": r.get("data_pagamento", ""),
                 "Confiança": r.get("confianca", "Baixa"),
@@ -129,7 +211,6 @@ class SheetsService:
                 "Nota": r.get("nota", "")
             })
 
-        # Atualizar Excel Único (se o ficheiro local não estiver bloqueado pelo utilizador)
         try:
             df = pd.DataFrame(table_rows)
             with pd.ExcelWriter(self.local_excel_path, engine="openpyxl") as writer:

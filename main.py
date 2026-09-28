@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import tempfile
+import datetime
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -11,10 +12,14 @@ from src.vision_extractor import VisionExtractor
 from src.validation_rules import ValidationRules
 from src.sheets_service import SheetsService
 from src.supabase_service import SupabaseService
-from src.notifier import SlackNotifier
+from src.notifier import ExecutionLogger
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+
+# IDs dos Google Docs de Configuração do Agente na pasta _Config Agente
+PROMPT_EXTRACAO_DOC_ID = "19xU7aksSo0RV45BoxwKSNov3Ast8qsYlW2ewrPNDYG4"
+CONTEXTO_INSTRUCION_DOC_ID = "1_zbYX09PCqsJ6uJddo4fC3yc6BG5dXkXhw4ysYC32t4"
 
 def load_config() -> dict:
     if os.path.exists(CONFIG_PATH):
@@ -28,6 +33,36 @@ def load_config() -> dict:
         "data_dir": "data",
         "llm_provider": "anthropic"
     }
+
+def load_instructions(gdrive_service: GDriveService) -> tuple:
+    """
+    Carrega os prompts e instruções de negócio.
+    Tenta descarregar dinamicamente dos Google Docs em _Config Agente.
+    Se falhar, recorre aos ficheiros TXT locais de segurança e sinaliza no log.
+    """
+    print("\n[0/4] A carregar instruções e prompt do Agente...")
+    try:
+        prompt_text = gdrive_service.export_google_doc_text(PROMPT_EXTRACAO_DOC_ID)
+        context_text = gdrive_service.export_google_doc_text(CONTEXTO_INSTRUCION_DOC_ID)
+        origem = "Google Docs (_Config Agente)"
+        print("  [Sucesso] Instruções carregadas dinamicamente a partir do Google Docs.")
+        return prompt_text, context_text, origem
+    except Exception as e:
+        print(f"  [Aviso] Falha ao ler Google Docs ({e}). A recorrer aos ficheiros TXT locais de segurança...")
+        prompt_path = os.path.join(BASE_DIR, "data", "prompt_extracao.txt")
+        context_path = os.path.join(BASE_DIR, "data", "contexto_instrucoes.txt")
+        
+        prompt_text = ""
+        context_text = ""
+        if os.path.exists(prompt_path):
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                prompt_text = f.read()
+        if os.path.exists(context_path):
+            with open(context_path, "r", encoding="utf-8") as f:
+                context_text = f.read()
+                
+        origem = "⚠️ RECURSO A FICHEIROS TXT LOCAIS (Fallback)"
+        return prompt_text, context_text, origem
 
 def run_pipeline():
     print("=" * 80)
@@ -54,21 +89,25 @@ def run_pipeline():
         local_state_path=os.path.join(data_dir, "processed_state.json")
     )
     extractor = VisionExtractor(provider=config.get("llm_provider", "anthropic"))
-    notifier = SlackNotifier()
+    logger = ExecutionLogger(sheets_service=sheets_service)
 
-    # 2. Deteção de ficheiros novos no Google Drive
+    # 2. Carregamento Dinâmico de Instruções (Google Docs vs TXT Fallback)
+    system_prompt, context_instructions, origem_instrucoes = load_instructions(gdrive_service)
+
+    # 3. Deteção de ficheiros novos no Google Drive (ignorando _Config Agente)
     print("\n[1/4] A consultar ficheiros novos no Google Drive...")
     new_files = gdrive_service.list_new_files()
     if not new_files:
         print("Nenhum ficheiro novo encontrado para processar.")
-        notifier.send_daily_summary(0, 0, 0.0, 0)
+        logger.log_execution(0, 0, 0, 0, 0.0, origem_instrucoes, "Sem ficheiros novos.")
         return
 
     print(f"Encontrados {len(new_files)} ficheiro(s) novo(s) para analisar.\n")
 
-    # 3. Processamento de cada documento
-    processed_count = 0
-    review_count = 0
+    # 4. Processamento de cada documento
+    qtd_alta = 0
+    qtd_media = 0
+    qtd_baixa = 0
     total_pending_amount = 0.0
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -81,8 +120,8 @@ def run_pipeline():
             local_pdf = os.path.join(temp_dir, f"temp_{i}.pdf")
             gdrive_service.download_file(file_id, local_pdf)
 
-            # Extração Multimodal por Visão LLM
-            raw_data = extractor.extract_from_pdf(local_pdf)
+            # Extração Multimodal por Visão LLM (com prompt dinâmico)
+            raw_data = extractor.extract_from_pdf(local_pdf, system_prompt=system_prompt)
             raw_data["ficheiro_original"] = filename
 
             # Validação Cruzada & Duplo Filtro de Confiança
@@ -109,14 +148,18 @@ def run_pipeline():
             # Anexar linha no Google Sheets nativo (spreadsheets.values.append)
             sheets_service.append_document_row(doc_data, drive_url)
 
-            # Atualizar Métricas do Alerta
-            if doc_data.get("confianca") == "Baixa" or doc_data.get("categoria_pasta") == "A Rever":
-                review_count += 1
+            # Contabilidade de Métricas
+            conf = doc_data.get("confianca", "Baixa")
+            if conf == "Alta":
+                qtd_alta += 1
+            elif conf == "Media" or conf == "Média":
+                qtd_media += 1
             else:
-                processed_count += 1
-                if doc_data.get("tipo_documento") in ["Fatura", "Nota de Crédito"]:
-                    val = float(doc_data.get("valor_total") or 0.0)
-                    total_pending_amount += val
+                qtd_baixa += 1
+
+            if doc_data.get("confianca") != "Baixa" and doc_data.get("tipo_documento") in ["Fatura", "Nota de Crédito"]:
+                val = float(doc_data.get("valor_total") or 0.0)
+                total_pending_amount += val
 
             print(f"  Tipo: {doc_data['tipo_documento']} | Farmácia: {doc_data['farmacia']}")
             print(f"  Fornecedor: {doc_data['fornecedor']} | N.º Doc: {doc_data['numero_documento']}")
@@ -124,8 +167,15 @@ def run_pipeline():
             print(f"  Novo Nome: {new_name}")
             print(f"  Destino: {org_info.get('subpath')}\n")
 
-    # 4. Envio de Alerta Diário para o Slack
-    notifier.send_daily_summary(processed_count, review_count, total_pending_amount, len(new_files))
+    # 5. Registo Auditável de Execução na Aba 'Log de Execuções' do Google Sheets
+    logger.log_execution(
+        total_docs=len(new_files),
+        qtd_alta=qtd_alta,
+        qtd_media=qtd_media,
+        qtd_baixa=qtd_baixa,
+        total_pending=total_pending_amount,
+        origem_instrucoes=origem_instrucoes
+    )
 
     print("=" * 80)
     print("PIPELINE CONCLUÍDO COM SUCESSO!")

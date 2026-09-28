@@ -5,11 +5,12 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
+CONFIG_FOLDER_ID = "1hKHfqTrUZ39ydf9GSKMHOs2ubPSeSyXA" # Pasta _Config Agente
+
 class GDriveService:
     """
     Serviço de integração nativa com a Google Drive API v3.
-    Gerencia listagem, renomeação e movimentação de ficheiros nas subpastas das farmácias.
-    Possui modo fallback local quando não há credenciais de Service Account.
+    Gerencia listagem, leitura de Google Docs, renomeação e movimentação de ficheiros.
     """
     def __init__(self, folder_id: str, credentials_json_path: str = None, local_input_dir: str = "input", local_output_dir: str = "output"):
         self.folder_id = folder_id
@@ -18,7 +19,6 @@ class GDriveService:
         self.service = None
         self.is_offline = True
 
-        # Tentar autenticar com Service Account
         creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
         if creds_json:
             try:
@@ -46,10 +46,23 @@ class GDriveService:
         if self.is_offline:
             print("Google Drive API a funcionar em modo offline (ficheiros locais).")
 
+    def export_google_doc_text(self, doc_id: str) -> str:
+        """
+        Exporta o conteúdo de um Google Doc como texto simples via Drive API.
+        Devolve o conteúdo em texto ou lança exceção em caso de erro.
+        """
+        if self.is_offline or not self.service:
+            raise RuntimeError("Drive API offline ou sem autenticação.")
+        try:
+            content_bytes = self.service.files().export(fileId=doc_id, mimeType='text/plain').execute()
+            return content_bytes.decode('utf-8')
+        except Exception as e:
+            raise RuntimeError(f"Falha ao exportar Google Doc {doc_id}: {e}")
+
     def list_new_files(self) -> list:
         """
         Lista os ficheiros PDF novos na pasta raiz do Drive.
-        Um ficheiro é novo se o nome ainda não estiver no formato padronizado Fornecedor_Farmacia_*.pdf
+        Exclui ficheiros contidos na pasta de configuração (_Config Agente).
         """
         if self.is_offline:
             os.makedirs(self.local_input_dir, exist_ok=True)
@@ -74,13 +87,17 @@ class GDriveService:
             
             new_files = []
             for f in files:
-                # Filtrar ficheiros que já tenham sido renomeados ou marcados como processados
+                parents = f.get('parents', [])
+                # Ignorar ficheiros na pasta _Config Agente
+                if CONFIG_FOLDER_ID in parents:
+                    continue
+                # Ignorar ficheiros já processados ou marcados com _AREVER
                 if not f['name'].startswith("[PROCESSADO]") and "_AREVER" not in f['name']:
                     new_files.append({
                         "id": f['id'],
                         "name": f['name'],
                         "web_view_link": f.get('webViewLink', f"https://drive.google.com/file/d/{f['id']}/view"),
-                        "parents": f.get('parents', [])
+                        "parents": parents
                     })
             return new_files
         except Exception as e:
@@ -104,10 +121,7 @@ class GDriveService:
         return dest_path
 
     def organize_file(self, file_info: dict, metadata: dict) -> dict:
-        """
-        Renomeia e move o ficheiro no Google Drive para a estrutura de pastas correta:
-        /Faturas Farmacia Piloto / [Farmacia] / [Categoria] / Fornecedor_Farmacia_AAAA-MM-DD_NºDoc.pdf
-        """
+        """Renomeia e move o ficheiro no Google Drive."""
         farmacia = metadata.get("farmacia", "Indeterminado")
         categoria = metadata.get("categoria_pasta", "A Rever")
         confianca = metadata.get("confianca", "Baixa")
@@ -117,7 +131,6 @@ class GDriveService:
         data_str = str(metadata.get("data_documento") or "2026-01-01")
         num_doc = str(metadata.get("numero_documento") or "SEM_NUM").replace("/", "_").replace("\\", "_")
 
-        # Se confiança for baixa, não renomear com dados incertos: usar nome original + _AREVER
         if confianca == "Baixa" or categoria == "A Rever":
             orig_name_no_ext = os.path.splitext(file_info['name'])[0]
             new_filename = f"{orig_name_no_ext}_AREVER.pdf"
@@ -137,7 +150,6 @@ class GDriveService:
             local_src = file_info.get("local_path", os.path.join(self.local_input_dir, file_info['id']))
             if os.path.exists(local_src):
                 shutil.copy2(local_src, target_path)
-                # Marcar ficheiro local na pasta de entrada como [PROCESSADO]
                 proc_name = f"[PROCESSADO] {new_filename}"
                 proc_path = os.path.join(self.local_input_dir, proc_name)
                 try:
@@ -151,11 +163,8 @@ class GDriveService:
                 "subpath": subpath
             }
 
-        # Atualizar no Google Drive API
         try:
             target_folder_id = self._get_or_create_subfolder(subpath)
-            
-            # Mover ficheiro alterando parents
             file = self.service.files().get(fileId=file_info['id'], fields='parents').execute()
             previous_parents = ",".join(file.get('parents', []))
             
@@ -181,7 +190,6 @@ class GDriveService:
             }
 
     def _get_or_create_subfolder(self, subpath: str) -> str:
-        """Navega ou cria recursivamente a estrutura de pastas no Drive."""
         parts = subpath.split('/')
         current_parent_id = self.folder_id
 
@@ -193,7 +201,6 @@ class GDriveService:
             if folders:
                 current_parent_id = folders[0]['id']
             else:
-                # Criar pasta
                 file_metadata = {
                     'name': part,
                     'mimeType': 'application/vnd.google-apps.folder',

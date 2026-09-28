@@ -1,44 +1,42 @@
 import os
-import requests
-import json
+import datetime
 
-class SlackNotifier:
+class ExecutionLogger:
     """
-    Envia alertas e resumos diários para o Slack via Webhook (Requisito 3.9 do PRD).
+    Gerencia o registo auditável de execução na aba 'Log de Execuções' do Google Sheets
+    (Requisito 3.9 do PRD - Sem Slack por agora).
     """
-    def __init__(self, webhook_url: str = None):
-        self.webhook_url = webhook_url or os.getenv("SLACK_WEBHOOK_URL")
+    def __init__(self, sheets_service):
+        self.sheets_service = sheets_service
 
-    def send_daily_summary(self, processed_count: int, review_count: int, pending_amount: float, total_docs: int) -> bool:
-        """Envia a mensagem de resumo diário formatada para o financeiro."""
-        msg_parts = []
-        if processed_count > 0:
-            msg_parts.append(f"✅ *{processed_count}* documento(s) novos processados com sucesso.")
-        if review_count > 0:
-            msg_parts.append(f"⚠️ *{review_count}* documento(s) enviado(s) para revisão manual (*A Rever*).")
+    def log_execution(self, total_docs: int, qtd_alta: int, qtd_media: int, qtd_baixa: int, total_pending: float, origem_instrucoes: str, notas_adicionais: str = ""):
+        timestamp_now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         
-        pending_formatted = f"{pending_amount:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
-        msg_parts.append(f"📊 *Total pendente acumulado:* {pending_formatted}")
+        summary_note = f"{total_docs} doc(s) analisado(s). {qtd_baixa} enviado(s) para A Rever."
+        if notas_adicionais:
+            summary_note += f" | {notas_adicionais}"
 
-        full_text = f"🤖 *Pipeline Diário - Farmácia Piloto*\n" + "\n".join(msg_parts)
+        log_data = {
+            "timestamp_utc": timestamp_now,
+            "total_processados": total_docs,
+            "qtd_alta": qtd_alta,
+            "qtd_media": qtd_media,
+            "qtd_baixa": qtd_baixa,
+            "total_pendente": total_pending,
+            "origem_instrucoes": origem_instrucoes,
+            "resumo_notas": summary_note
+        }
 
-        print("\n--- RESUMO DE EXECUÇÃO DIÁRIA (ALERT) ---")
-        print(full_text)
-        print("------------------------------------------\n")
+        print("\n" + "=" * 80)
+        print("   RESUMO DE REGISTO DE EXECUÇÃO (LOG DE EXECUÇÕES)   ")
+        print("=" * 80)
+        print(f"  Data/Hora UTC: {timestamp_now}")
+        print(f"  Total Processados: {total_docs}")
+        print(f"  Confiança -> Alta: {qtd_alta} | Média: {qtd_media} | Baixa (A Rever): {qtd_baixa}")
+        print(f"  Total Pendente (€): {total_pending:,.2f} €")
+        print(f"  Origem Instruções: {origem_instrucoes}")
+        print(f"  Notas: {summary_note}")
+        print("=" * 80 + "\n")
 
-        if not self.webhook_url:
-            print("  [Slack] Nenhum SLACK_WEBHOOK_URL configurado. Alerta emitido apenas na consola.")
-            return False
-
-        try:
-            payload = {"text": full_text}
-            res = requests.post(self.webhook_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
-            if res.status_code == 200:
-                print("  [Slack] Notificação enviada para o Slack com sucesso!")
-                return True
-            else:
-                print(f"  [Slack] Erro ao enviar para o Slack (Status {res.status_code}): {res.text}")
-                return False
-        except Exception as e:
-            print(f"  [Slack] Exceção ao ligar ao webhook do Slack: {e}")
-            return False
+        if self.sheets_service:
+            self.sheets_service.append_execution_log(log_data)
