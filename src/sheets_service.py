@@ -134,9 +134,14 @@ class SheetsService:
         ]
         self.ensure_sheet_tab_exists("Resumo Financeiro", rows)
         
-        # Atualizar fórmulas existentes para garantir que eventuais erros anteriores são corrigidos
+        # Limpar fórmulas antigas com erro e reescrever fórmulas atualizadas
         if not self.is_offline and self.service:
             try:
+                self.service.spreadsheets().values().clear(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Resumo Financeiro'!A1:Z50"
+                ).execute()
+
                 self.service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id,
                     range="'Resumo Financeiro'!A1",
