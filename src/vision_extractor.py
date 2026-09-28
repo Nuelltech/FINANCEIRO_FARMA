@@ -96,16 +96,38 @@ class VisionExtractor:
             "text": "Analise estas imagens do documento financeiro e extraia a informação estritamente de acordo com o esquema JSON pedido."
         })
         
-        model_name = os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
-        response = client.messages.create(
-            model=model_name,
-            max_tokens=2048,
-            system=system_prompt,
-            messages=[{"role": "user", "content": content}]
-        )
-        
-        raw_text = response.content[0].text
-        return self._parse_json_response(raw_text, pdf_path)
+        models_to_try = [
+            os.getenv("CLAUDE_MODEL"),
+            "claude-3-5-sonnet-20240620",
+            "claude-3-7-sonnet-20250219",
+            "claude-3-haiku-20240307",
+            "claude-3-opus-20240229"
+        ]
+        # Filtrar None e duplicados mantendo a ordem
+        seen = set()
+        clean_models = []
+        for m in models_to_try:
+            if m and m not in seen:
+                seen.add(m)
+                clean_models.append(m)
+
+        last_error = None
+        for m_name in clean_models:
+            try:
+                response = client.messages.create(
+                    model=m_name,
+                    max_tokens=2048,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": content}]
+                )
+                raw_text = response.content[0].text
+                return self._parse_json_response(raw_text, pdf_path)
+            except Exception as e:
+                print(f"  [Aviso Anthropic] Modelo '{m_name}' indisponível ({e}). A tentar próximo modelo...")
+                last_error = e
+
+        if last_error:
+            raise last_error
 
     def _extract_with_gemini(self, pdf_path: str, system_prompt: str) -> dict:
         from google import genai
