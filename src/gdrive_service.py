@@ -170,7 +170,7 @@ class GDriveService:
             
             updated_file = self.service.files().update(
                 fileId=file_info['id'],
-                name=new_filename,
+                body={'name': new_filename},
                 addParents=target_folder_id,
                 removeParents=previous_parents,
                 fields='id, name, webViewLink, parents'

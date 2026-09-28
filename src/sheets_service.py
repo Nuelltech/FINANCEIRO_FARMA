@@ -44,8 +44,8 @@ class SheetsService:
         if self.is_offline:
             print("Google Sheets API a funcionar em modo offline (Excel/JSON locais).")
 
-    def ensure_log_sheet_exists(self):
-        """Garante que a aba 'Log de Execuções' existe no Google Sheets; cria-a se necessário."""
+    def ensure_sheet_tab_exists(self, tab_name: str, header_row: list):
+        """Garante que uma aba específica existe no Google Sheets; cria-a com cabeçalhos se necessário."""
         if self.is_offline or not self.service:
             return
 
@@ -54,14 +54,14 @@ class SheetsService:
             sheets = spreadsheet.get('sheets', [])
             sheet_names = [s.get('properties', {}).get('title') for s in sheets]
 
-            if "Log de Execuções" not in sheet_names:
-                print("  [GSheets API] Aba 'Log de Execuções' não encontrada. A criar nova aba...")
+            if tab_name not in sheet_names:
+                print(f"  [GSheets API] Aba '{tab_name}' não encontrada. A criar nova aba...")
                 batch_update_request = {
                     'requests': [
                         {
                             'addSheet': {
                                 'properties': {
-                                    'title': 'Log de Execuções'
+                                    'title': tab_name
                                 }
                             }
                         }
@@ -72,26 +72,46 @@ class SheetsService:
                     body=batch_update_request
                 ).execute()
 
-                # Adicionar cabeçalhos
-                header_row = [
-                    "Data/Hora Execução (UTC)",
-                    "Total Processados",
-                    "Confiança Alta",
-                    "Confiança Média",
-                    "Confiança Baixa (A Rever)",
-                    "Total Pendente (€)",
-                    "Origem Instruções",
-                    "Notas / Resumo"
-                ]
-                self.service.spreadsheets().values().append(
-                    spreadsheetId=self.spreadsheet_id,
-                    range="'Log de Execuções'!A:H",
-                    valueInputOption="USER_ENTERED",
-                    body={'values': [header_row]}
-                ).execute()
-                print("  [GSheets API] Aba 'Log de Execuções' criada com cabeçalhos com sucesso.")
+                if header_row:
+                    self.service.spreadsheets().values().append(
+                        spreadsheetId=self.spreadsheet_id,
+                        range=f"'{tab_name}'!A1",
+                        valueInputOption="USER_ENTERED",
+                        body={'values': [header_row]}
+                    ).execute()
+                print(f"  [GSheets API] Aba '{tab_name}' criada com cabeçalhos com sucesso.")
         except Exception as e:
-            print(f"Erro ao verificar/criar aba 'Log de Execuções': {e}")
+            print(f"Erro ao verificar/criar aba '{tab_name}': {e}")
+
+    def ensure_log_sheet_exists(self):
+        header = [
+            "Data/Hora Execução (UTC)",
+            "Total Processados",
+            "Confiança Alta",
+            "Confiança Média",
+            "Confiança Baixa (A Rever)",
+            "Total Pendente (€)",
+            "Origem Instruções",
+            "Notas / Resumo"
+        ]
+        self.ensure_sheet_tab_exists("Log de Execuções", header)
+
+    def ensure_registo_sheet_exists(self):
+        header = [
+            "Nº Documento",
+            "Tipo",
+            "Fornecedor",
+            "Farmácia",
+            "Data",
+            "Valor (€)",
+            "Nº Lote Associado",
+            "Estado Pagamento",
+            "Data Pagamento",
+            "Confiança",
+            "Ficheiro (link Drive)",
+            "Nota"
+        ]
+        self.ensure_sheet_tab_exists("Registo", header)
 
     def append_execution_log(self, log_data: dict) -> bool:
         """
@@ -135,6 +155,7 @@ class SheetsService:
         Colunas:
         1. Nº Documento | 2. Tipo | 3. Fornecedor | 4. Farmácia | 5. Data | 6. Valor (€) | 7. Nº Lote Associado | 8. Estado Pagamento | 9. Data Pagamento | 10. Confiança | 11. Ficheiro (link Drive) | 12. Nota
         """
+        self.ensure_registo_sheet_exists()
         if doc_data.get("tipo_documento") == "Resumo de Lote" and doc_data.get("confianca") != "Baixa":
             print("  [Opção B PRD] Resumo de Lote registado no Supabase; omitida linha financeira no Sheets.")
             return True
@@ -161,7 +182,7 @@ class SheetsService:
             body = {'values': [row_values]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range="Registo!A:L",
+                range="'Registo'!A:L",
                 valueInputOption="USER_ENTERED",
                 insertDataOption="INSERT_ROWS",
                 body=body
