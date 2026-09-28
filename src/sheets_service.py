@@ -90,47 +90,47 @@ class SheetsService:
             [""],
             ["TOTAL FATURADO (€)", "TOTAL CREDITADO (€)", "TOTAL PAGO (€)", "TOTAL PENDENTE A PAGAR (€)", "DOCS A REVER (QTD)"],
             [
-                '=SUMIFS(Registo!G:G, Registo!B:B, "Fatura")',
-                '=SUMIFS(Registo!G:G, Registo!B:B, "Nota de Crédito")',
-                '=SUMIFS(Registo!G:G, Registo!I:I, "Pago")',
-                '=SUMIFS(Registo!G:G, Registo!B:B, "Fatura", Registo!I:I, "Pendente") - SUMIFS(Registo!G:G, Registo!B:B, "Nota de Crédito", Registo!I:I, "Pendente")',
-                '=COUNTIF(Registo!K:K, "Baixa")'
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!B:B; "Fatura")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!B:B; "Nota de Crédito")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!I:I; "Pago")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!B:B; "Fatura"; \'Registo\'!I:I; "Pendente") - SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!B:B; "Nota de Crédito"; \'Registo\'!I:I; "Pendente")',
+                '=CONTAR.SE(\'Registo\'!K:K; "Baixa")'
             ],
             [""],
             ["RESUMO POR FARMÁCIA"],
             ["Farmácia", "Total Faturado (€)", "Notas de Crédito (€)", "Total Pago (€)", "Pendente A Pagar (€)", "Qtd Pendentes"],
             [
                 "Farmácia Baptista",
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!B:B, "Fatura")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!B:B, "Nota de Crédito")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!I:I, "Pago")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!B:B, "Fatura", Registo!I:I, "Pendente") - SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Baptista", Registo!B:B, "Nota de Crédito", Registo!I:I, "Pendente")',
-                '=COUNTIFS(Registo!D:D, "Farmácia Baptista", Registo!I:I, "Pendente")'
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!B:B; "Fatura")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!B:B; "Nota de Crédito")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!I:I; "Pago")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!B:B; "Fatura"; \'Registo\'!I:I; "Pendente") - SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!B:B; "Nota de Crédito"; \'Registo\'!I:I; "Pendente")',
+                '=CONTAR.SE.S(\'Registo\'!D:D; "Farmácia Baptista"; \'Registo\'!I:I; "Pendente")'
             ],
             [
                 "Farmácia Campeã",
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!B:B, "Fatura")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!B:B, "Nota de Crédito")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!I:I, "Pago")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!B:B, "Fatura", Registo!I:I, "Pendente") - SUMIFS(Registo!G:G, Registo!D:D, "Farmácia Campeã", Registo!B:B, "Nota de Crédito", Registo!I:I, "Pendente")',
-                '=COUNTIFS(Registo!D:D, "Farmácia Campeã", Registo!I:I, "Pendente")'
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!B:B; "Fatura")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!B:B; "Nota de Crédito")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!I:I; "Pago")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!B:B; "Fatura"; \'Registo\'!I:I; "Pendente") - SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!B:B; "Nota de Crédito"; \'Registo\'!I:I; "Pendente")',
+                '=CONTAR.SE.S(\'Registo\'!D:D; "Farmácia Campeã"; \'Registo\'!I:I; "Pendente")'
             ],
             [
                 "Indeterminado / A Rever",
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Indeterminado", Registo!B:B, "Fatura")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Indeterminado", Registo!B:B, "Nota de Crédito")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Indeterminado", Registo!I:I, "Pago")',
-                '=SUMIFS(Registo!G:G, Registo!D:D, "Indeterminado", Registo!B:B, "Fatura", Registo!I:I, "Pendente")',
-                '=COUNTIFS(Registo!D:D, "Indeterminado", Registo!I:I, "Pendente")'
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Indeterminado"; \'Registo\'!B:B; "Fatura")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Indeterminado"; \'Registo\'!B:B; "Nota de Crédito")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Indeterminado"; \'Registo\'!I:I; "Pago")',
+                '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!D:D; "Indeterminado"; \'Registo\'!B:B; "Fatura"; \'Registo\'!I:I; "Pendente")',
+                '=CONTAR.SE.S(\'Registo\'!D:D; "Indeterminado"; \'Registo\'!I:I; "Pendente")'
             ],
             [""],
             ["BALANÇO POR FORNECEDOR"],
             ["Fornecedor", "Faturas (€)", "Créditos (€)", "Já Pago (€)", "Pendente Atual (€)"],
-            ["Cooprofar", '=SUMIFS(Registo!G:G, Registo!C:C, "Cooprofar", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Cooprofar", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Cooprofar", Registo!I:I, "Pago")', '=B14-C14-D14'],
-            ["Alliance Healthcare", '=SUMIFS(Registo!G:G, Registo!C:C, "Alliance Healthcare", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Alliance Healthcare", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Alliance Healthcare", Registo!I:I, "Pago")', '=B15-C15-D15'],
-            ["NOS", '=SUMIFS(Registo!G:G, Registo!C:C, "NOS", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "NOS", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "NOS", Registo!I:I, "Pago")', '=B16-C16-D16'],
-            ["Realcópia", '=SUMIFS(Registo!G:G, Registo!C:C, "Realcópia", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Realcópia", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Realcópia", Registo!I:I, "Pago")', '=B17-C17-D17'],
-            ["Utilmédica", '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!B:B, "Fatura")', '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!B:B, "Nota de Crédito")', '=SUMIFS(Registo!G:G, Registo!C:C, "Utilmédica", Registo!I:I, "Pago")', '=B18-C18-D18']
+            ["Cooprofar", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Cooprofar"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Cooprofar"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Cooprofar"; \'Registo\'!I:I; "Pago")', '=B14-C14-D14'],
+            ["Alliance Healthcare", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Alliance Healthcare"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Alliance Healthcare"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Alliance Healthcare"; \'Registo\'!I:I; "Pago")', '=B15-C15-D15'],
+            ["NOS", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "NOS"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "NOS"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "NOS"; \'Registo\'!I:I; "Pago")', '=B16-C16-D16'],
+            ["Realcópia", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Realcópia"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Realcópia"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Realcópia"; \'Registo\'!I:I; "Pago")', '=B17-C17-D17'],
+            ["Utilmédica", '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Utilmédica"; \'Registo\'!B:B; "Fatura")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Utilmédica"; \'Registo\'!B:B; "Nota de Crédito")', '=SOMAS.SE.S(\'Registo\'!G:G; \'Registo\'!C:C; "Utilmédica"; \'Registo\'!I:I; "Pago")', '=B18-C18-D18']
         ]
         self.ensure_sheet_tab_exists("Resumo Financeiro", rows)
         
