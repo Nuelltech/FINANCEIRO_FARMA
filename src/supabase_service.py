@@ -65,6 +65,7 @@ class SupabaseService:
             "tipo_documento": doc_data.get("tipo_documento"),
             "numero_documento": doc_data.get("numero_documento"),
             "data_documento": doc_data.get("data_documento"),
+            "data_vencimento": doc_data.get("data_vencimento"),
             "valor_total": doc_data.get("valor_total"),
             "confianca": doc_data.get("confianca"),
             "motivo_baixa_confianca": doc_data.get("motivo_baixa_confianca"),

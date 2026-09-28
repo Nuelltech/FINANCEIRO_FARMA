@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS faturas_processadas (
     tipo_documento TEXT,
     numero_documento TEXT,
     data_documento DATE,
+    data_vencimento DATE,
     valor_total NUMERIC(10, 2),
     confianca TEXT NOT NULL, -- 'Alta', 'Média', 'Baixa'
     motivo_baixa_confianca TEXT,
@@ -21,6 +22,9 @@ CREATE TABLE IF NOT EXISTS faturas_processadas (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Adicionar coluna se a tabela já existia antes
+ALTER TABLE faturas_processadas ADD COLUMN IF NOT EXISTS data_vencimento DATE;
 
 -- 2. Tabela específica para audit e conciliação de Resumos de Lote (Opção B)
 CREATE TABLE IF NOT EXISTS resumos_lote (
