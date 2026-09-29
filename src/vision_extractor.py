@@ -37,6 +37,7 @@ REGRAS ESTRITAS DE EXTRAÇÃO:
 6. Se for um "Resumo de Lote", inclua "numero_lote" e no array "faturas_agregadas" a lista das faturas individuais com números e valores.
 7. Moeda deve ser sempre "EUR". Datas no formato YYYY-MM-DD. Valores numéricos como float (ex: 1250.45).
 8. Para "nif_fornecedor": extraia o NIF/NIPC do EMISSOR (fornecedor) do documento. Em Portugal aparece tipicamente junto aos labels "NIF:", "NIPC:", "Contribuinte:" ou como número de 9 dígitos no cabeçalho/rodapé. Se não for visível, devolva null. NÃO confunda com o NIF da farmácia (destinatário).
+9. Para "motivo_baixa_confianca": SEMPRE preencha este campo quando "confianca" for "baixa" ou "media". Explique de forma clara e específica O QUE o revisor humano deve verificar ou corrigir no documento. Exemplos: "Número de documento ilegível — verificar manualmente", "Valor rasurado na página 2", "Não é possível confirmar se a farmácia destinatária é Baptista ou Campeã — verificar carimbo", "Documento parece ser uma guia de remessa, não uma fatura — confirmar tipo". Se confiança for "alta", deixe null.
 """
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"

@@ -158,11 +158,29 @@ class ValidationRules:
 
         # 5. Estado de Processamento e Nota
         if confianca_final == "baixa":
-            nota = f"Processo manual necessário: {'; '.join(motivos)}" if motivos else "Processo manual necessário (baixa confiança)"
+            # Construir nota detalhada e accionável para o revisor humano
+            nota_partes = ["⚠️ REVER MANUALMENTE"]
+            if missing_fields:
+                campos_pt = {
+                    "numero_documento": "Nº do Documento",
+                    "valor_total": "Valor Total",
+                    "fornecedor": "Fornecedor",
+                    "data_documento": "Data do Documento"
+                }
+                campos_legíveis = [campos_pt.get(f, f) for f in missing_fields]
+                nota_partes.append(f"Campos em falta: {', '.join(campos_legíveis)}")
+            if farmacia_normalizada == "Indeterminado":
+                nota_partes.append("Farmácia destinatária não identificada")
+            # Incluir a explicação do próprio agente de IA (motivo_baixa_confianca do LLM)
+            llm_reason = processed.get("motivo_baixa_confianca")
+            if llm_reason and str(llm_reason).strip():
+                nota_partes.append(f"Motivo IA: {str(llm_reason).strip()}")
+            nota = " | ".join(nota_partes)
             categoria_pasta = "A Rever"
         else:
             nota = f"Lote associado: {processed.get('numero_lote_associado')}" if processed.get('numero_lote_associado') else ""
             categoria_pasta = ValidationRules.determine_folder_category(tipo_normalizado)
+
 
         processed.update({
             "tipo_documento": tipo_normalizado,
