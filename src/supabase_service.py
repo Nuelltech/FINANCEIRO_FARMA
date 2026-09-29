@@ -126,6 +126,18 @@ class SupabaseService:
         self._save_local_state(state)
         return True
 
+    def get_all_batch_summaries(self) -> list:
+        """Obtém todos os resumos de lote registados (para conciliação com faturas)."""
+        if not self.is_offline and self.client:
+            try:
+                res = self.client.table("resumos_lote").select("*").execute()
+                return res.data or []
+            except Exception as e:
+                print(f"Aviso ao consultar resumos_lote do Supabase: {e}")
+
+        state = self._load_local_state()
+        return state.get("resumos_lote", [])
+
     def _load_local_state(self) -> dict:
         os.makedirs(os.path.dirname(self.local_state_path), exist_ok=True)
         if os.path.exists(self.local_state_path):

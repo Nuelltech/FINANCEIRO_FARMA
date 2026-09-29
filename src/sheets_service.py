@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import pandas as pd
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -645,6 +646,9 @@ class SheetsService:
         else:
             ficheiro_cell = str(drive_url or filename_display)
 
+        is_lote = str(doc_data.get("tipo_documento", "")).lower() == "resumo de lote"
+        lote_associado = "" if is_lote else str(doc_data.get("numero_lote_associado") or "")
+
         mapping = {
             "Nº Documento": str(doc_data.get("numero_documento") or doc_data.get("numero_lote") or ""),
             "Tipo": str(doc_data.get("tipo_documento") or "A Rever"),
@@ -653,7 +657,7 @@ class SheetsService:
             "Data": str(doc_data.get("data_documento") or ""),
             "Data Vencimento": data_venc,
             "Valor (€)": float(doc_data.get("valor_total") or 0.0) if doc_data.get("valor_total") is not None else 0.0,
-            "Nº Lote Associado": str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""),
+            "Nº Lote Associado": lote_associado,
             "Estado Pagamento": str(doc_data.get("estado_pagamento") or "Pendente"),
             "Data Pagamento": str(doc_data.get("data_pagamento") or ""),
             "Confiança": str(doc_data.get("confianca") or "Baixa"),
@@ -673,7 +677,7 @@ class SheetsService:
                 elif "nif" in col_clean.lower():
                     row_values.append(nif_fornecedor)
                 elif "lote" in col_clean.lower():
-                    row_values.append(str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""))
+                    row_values.append(lote_associado)
                 elif "vencimento" in col_clean.lower() or "limite" in col_clean.lower():
                     row_values.append(data_venc)
                 elif "confiança" in col_clean.lower() or "confianca" in col_clean.lower():
@@ -693,7 +697,7 @@ class SheetsService:
                 str(doc_data.get("data_documento") or ""),
                 data_venc,
                 float(doc_data.get("valor_total") or 0.0) if doc_data.get("valor_total") is not None else 0.0,
-                str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""),
+                lote_associado,
                 str(doc_data.get("estado_pagamento") or "Pendente"),
                 str(doc_data.get("data_pagamento") or ""),
                 str(doc_data.get("confianca") or "Baixa"),
@@ -702,8 +706,6 @@ class SheetsService:
                 nif_fornecedor,
                 ""
             ]
-
-
 
         if self.is_offline:
             return self._append_local(doc_data, row_values, drive_url)
@@ -722,6 +724,103 @@ class SheetsService:
         except Exception as e:
             print(f"Erro ao anexar linha no GSheets API: {e}. A guardar localmente...")
             return self._append_local(doc_data, row_values, drive_url)
+
+    def reconcile_batch_invoices(self, batch_summaries: list):
+        """
+        Percorre as linhas da aba 'Registo' e associa o 'Nº Lote Associado'
+        a todas as faturas individuais que constem na lista de faturas agregadas de cada lote.
+        """
+        if not batch_summaries or self.is_offline or not self.service:
+            return
+
+        try:
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Registo'!A1:O1000"
+            ).execute()
+            rows = res.get('values', [])
+            if not rows or len(rows) <= 1:
+                return
+
+            headers = [str(c).strip().lower() for c in rows[0]]
+            
+            idx_doc = None
+            idx_tipo = None
+            idx_lote = None
+            for i, h in enumerate(headers):
+                if ("doc" in h or "nº" in h or "numero" in h) and "lote" not in h:
+                    idx_doc = i
+                elif "tipo" in h:
+                    idx_tipo = i
+                elif "lote" in h:
+                    idx_lote = i
+
+            if idx_doc is None or idx_lote is None:
+                return
+
+            # Criar mapa de correspondência: {normalized_invoice_number: numero_lote}
+            invoice_to_lote = {}
+            for batch in batch_summaries:
+                lote_num = str(batch.get("numero_lote", "")).strip()
+                if not lote_num:
+                    continue
+                agregadas = batch.get("lista_faturas_agregadas", [])
+                for f in agregadas:
+                    if isinstance(f, dict):
+                        f_num = str(f.get("numero", "")).strip()
+                    else:
+                        f_num = str(f).strip()
+                    if f_num:
+                        invoice_to_lote[f_num.lower()] = lote_num
+                        # Também mapear dígitos apenas (ex: 29916327 de F/29916327)
+                        digits = re.sub(r'\D', '', f_num)
+                        if len(digits) >= 5:
+                            invoice_to_lote[digits] = lote_num
+
+            # Percorrer faturas no Registo e preencher Nº Lote Associado
+            updated = False
+            for row_idx, r in enumerate(rows[1:], start=2):
+                if idx_doc >= len(r):
+                    continue
+                tipo_val = r[idx_tipo].strip().lower() if idx_tipo is not None and idx_tipo < len(r) else ""
+                
+                # Se for o próprio Resumo de Lote, garantir que a coluna associado fica vazia
+                if "resumo" in tipo_val or "lote" in tipo_val:
+                    if idx_lote < len(r) and r[idx_lote].strip() == r[idx_doc].strip():
+                        r[idx_lote] = ""
+                        updated = True
+                    continue
+
+                doc_num = r[idx_doc].strip()
+                current_lote = r[idx_lote].strip() if idx_lote < len(r) else ""
+                
+                # Procurar correspondência
+                matched_lote = None
+                if doc_num.lower() in invoice_to_lote:
+                    matched_lote = invoice_to_lote[doc_num.lower()]
+                else:
+                    digits = re.sub(r'\D', '', doc_num)
+                    if digits and digits in invoice_to_lote:
+                        matched_lote = invoice_to_lote[digits]
+
+                if matched_lote and current_lote != matched_lote:
+                    while len(r) <= idx_lote:
+                        r.append("")
+                    r[idx_lote] = matched_lote
+                    updated = True
+                    print(f"  [Lote Conciliado] Fatura '{doc_num}' associada ao Lote {matched_lote}.")
+
+            if updated:
+                self.service.spreadsheets().values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Registo'!A1",
+                    valueInputOption="USER_ENTERED",
+                    body={'values': rows}
+                ).execute()
+                print("  [GSheets API] Aba 'Registo' atualizada com as associações de lote nas faturas.")
+        except Exception as e:
+            print(f"Aviso ao conciliar faturas com lotes: {e}")
+
 
     def _append_local(self, doc_data: dict, row_values: list, drive_url: str) -> bool:
         """Guarda localmente em JSON e Excel Único para fallback offline."""
