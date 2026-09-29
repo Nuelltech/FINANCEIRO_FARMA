@@ -923,6 +923,90 @@ class SheetsService:
         except Exception as e:
             print(f"Aviso ao conciliar faturas com lotes: {e}")
 
+    def heal_missing_file_links(self, supabase_service=None):
+        """
+        Auto-Cura (Self-Healing):
+        Verifica se existem linhas no 'Registo' onde o nome do ficheiro perdeu o link clicável
+        (virou texto simples) e restaura automaticamente a fórmula =HYPERLINK(url; "nome") a partir
+        da base de dados central (Supabase).
+        """
+        if self.is_offline or not self.service or not supabase_service:
+            return
+
+        try:
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Registo'!A1:O1000",
+                valueRenderOption="FORMULA"
+            ).execute()
+            rows = res.get('values', [])
+            if len(rows) < 2:
+                return
+
+            header = [str(c).strip().lower() for c in rows[0]]
+            idx_doc = next((i for i, h in enumerate(header) if "documento" in h or "nº doc" in h), None)
+            idx_forn = next((i for i, h in enumerate(header) if "fornecedor" in h), None)
+            idx_ficheiro = next((i for i, h in enumerate(header) if "ficheiro" in h or "arquivo" in h), 11)
+
+            # Obter registos do Supabase
+            processed_files = supabase_service.get_all_processed_files()
+            if not processed_files:
+                return
+
+            # Mapeamento rápido por nome de ficheiro e por tuplo (fornecedor, num_doc)
+            url_by_filename = {}
+            url_by_doc = {}
+            for p in processed_files:
+                url = p.get("drive_file_url")
+                if not url:
+                    continue
+                new_n = (p.get("nome_ficheiro_novo") or "").strip()
+                orig_n = (p.get("nome_ficheiro_original") or "").strip()
+                forn = (p.get("fornecedor") or "").strip().lower()
+                doc_n = (p.get("numero_documento") or "").strip().lower()
+
+                if new_n:
+                    url_by_filename[new_n] = url
+                if orig_n:
+                    url_by_filename[orig_n] = url
+                if forn and doc_n:
+                    url_by_doc[(forn, doc_n)] = url
+
+            cell_updates = []
+            col_ficheiro_letter = chr(65 + idx_ficheiro)
+
+            for row_idx, r in enumerate(rows[1:], start=2):
+                if len(r) <= idx_ficheiro:
+                    continue
+                
+                cell_val = str(r[idx_ficheiro]).strip()
+                # Se não começar por '=' e tiver extensão de ficheiro (ex: .pdf)
+                if cell_val and not cell_val.startswith("="):
+                    matched_url = url_by_filename.get(cell_val)
+                    if not matched_url and idx_forn is not None and idx_doc is not None:
+                        f_name = r[idx_forn].strip().lower() if idx_forn < len(r) else ""
+                        d_name = r[idx_doc].strip().lower() if idx_doc < len(r) else ""
+                        matched_url = url_by_doc.get((f_name, d_name))
+
+                    if matched_url:
+                        formula = f'=HYPERLINK("{matched_url}"; "{cell_val}")'
+                        cell_updates.append({
+                            'range': f"'Registo'!{col_ficheiro_letter}{row_idx}",
+                            'values': [[formula]]
+                        })
+
+            if cell_updates:
+                self.service.spreadsheets().values().batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body={
+                        'valueInputOption': 'USER_ENTERED',
+                        'data': cell_updates
+                    }
+                ).execute()
+                print(f"  [Self-Healing] {len(cell_updates)} links de ficheiros restaurados com sucesso no 'Registo'.")
+        except Exception as e:
+            print(f"Aviso no Self-Healing de links do Sheets: {e}")
+
 
 
     def _append_local(self, doc_data: dict, row_values: list, drive_url: str) -> bool:

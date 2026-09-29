@@ -126,6 +126,18 @@ class SupabaseService:
         self._save_local_state(state)
         return True
 
+    def get_all_processed_files(self) -> list:
+        """Obtém todos os documentos processados no Supabase com links do Google Drive."""
+        if not self.is_offline and self.client:
+            try:
+                res = self.client.table("faturas_processadas").select("*").execute()
+                return res.data or []
+            except Exception as e:
+                print(f"Aviso ao consultar faturas_processadas do Supabase: {e}")
+
+        state = self._load_local_state()
+        return state.get("records", [])
+
     def get_all_batch_summaries(self) -> list:
         """Obtém todos os resumos de lote registados (para conciliação com faturas)."""
         if not self.is_offline and self.client:

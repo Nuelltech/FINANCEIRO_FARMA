@@ -263,6 +263,10 @@ def run_pipeline():
     all_batches = supabase_service.get_all_batch_summaries()
     sheets_service.reconcile_batch_invoices(all_batches, supabase_service)
 
+    # Auto-Cura: Restaurar links de ficheiros que possam ter sido convertidos em texto simples
+    print("\n[3d/4] Verificação de Integridade e Auto-Cura de Links...")
+    sheets_service.heal_missing_file_links(supabase_service)
+
 
     # 5. Registo Auditável de Execução na Aba 'Log de Execuções' do Google Sheets
     logger.log_execution(
