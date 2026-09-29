@@ -554,10 +554,10 @@ class SheetsService:
             print(f"Aviso ao verificar linhas para reprocessar: {e}")
             return []
 
-    def update_reprocessed_row(self, row_index: int, new_drive_url: str = None, new_confianca: str = "Validado (Manual)", new_nota: str = ""):
+    def update_reprocessed_row(self, row_index: int, new_filename: str = "", new_drive_url: str = None, new_confianca: str = "Validado (Manual)", new_nota: str = ""):
         """
         Atualiza o estado de uma linha reprocessada na aba 'Registo':
-        - Atualiza Ficheiro (se novo link)
+        - Atualiza Ficheiro com HYPERLINK(url, nome_ficheiro)
         - Confiança = 'Validado (Manual)'
         - Nota = limpa ou atualizada
         - Reprocessar = 'Concluído'
@@ -574,11 +574,17 @@ class SheetsService:
             while len(row_vals) < 15:
                 row_vals.append("")
 
+            if new_drive_url and str(new_drive_url).startswith("http"):
+                display_name = new_filename or "Ver Ficheiro"
+                file_cell = f'=HYPERLINK("{new_drive_url}"; "{display_name}")'
+            else:
+                file_cell = str(new_drive_url or new_filename or "")
+
             headers = self.get_sheet_headers("Registo")
             for i, h in enumerate(headers):
                 hl = h.lower()
                 if ("ficheiro" in hl or "link" in hl) and new_drive_url:
-                    row_vals[i] = new_drive_url
+                    row_vals[i] = file_cell
                 elif "confian" in hl:
                     row_vals[i] = new_confianca
                 elif "nota" in hl:
@@ -633,6 +639,7 @@ class SheetsService:
     def append_document_row(self, doc_data: dict, drive_url: str) -> bool:
         """
         Adiciona uma nova linha de documento no registo principal alinhando dinamicamente com os cabeçalhos reais.
+        Mostra o nome do ficheiro formatado como link clicável via HYPERLINK.
         """
         self.ensure_registo_sheet_exists()
         self.ensure_resumo_sheet_exists()
@@ -641,6 +648,12 @@ class SheetsService:
 
         data_venc = str(doc_data.get("data_vencimento") or doc_data.get("data_documento") or "")
         nif_fornecedor = str(doc_data.get("nif_fornecedor") or "")
+        filename_display = str(doc_data.get("nome_ficheiro_novo") or doc_data.get("ficheiro_original") or "Ver Ficheiro")
+
+        if drive_url and str(drive_url).startswith("http"):
+            ficheiro_cell = f'=HYPERLINK("{drive_url}"; "{filename_display}")'
+        else:
+            ficheiro_cell = str(drive_url or filename_display)
 
         mapping = {
             "Nº Documento": str(doc_data.get("numero_documento") or doc_data.get("numero_lote") or ""),
@@ -654,8 +667,8 @@ class SheetsService:
             "Estado Pagamento": str(doc_data.get("estado_pagamento") or "Pendente"),
             "Data Pagamento": str(doc_data.get("data_pagamento") or ""),
             "Confiança": str(doc_data.get("confianca") or "Baixa"),
-            "Ficheiro": str(drive_url or ""),
-            "Ficheiro (link Drive)": str(drive_url or ""),
+            "Ficheiro": ficheiro_cell,
+            "Ficheiro (link Drive)": ficheiro_cell,
             "Nota": str(doc_data.get("nota") or ""),
             "NIF Fornecedor": nif_fornecedor,
             "Reprocessar": ""
@@ -666,7 +679,7 @@ class SheetsService:
             for col in existing_headers:
                 col_clean = col.strip()
                 if "fatura" in col_clean.lower() or "ficheiro" in col_clean.lower() or "link" in col_clean.lower():
-                    row_values.append(str(drive_url or ""))
+                    row_values.append(ficheiro_cell)
                 elif "nif" in col_clean.lower():
                     row_values.append(nif_fornecedor)
                 elif "lote" in col_clean.lower():
@@ -694,11 +707,12 @@ class SheetsService:
                 str(doc_data.get("estado_pagamento") or "Pendente"),
                 str(doc_data.get("data_pagamento") or ""),
                 str(doc_data.get("confianca") or "Baixa"),
-                str(drive_url or ""),
+                ficheiro_cell,
                 str(doc_data.get("nota") or ""),
                 nif_fornecedor,
                 ""
             ]
+
 
 
         if self.is_offline:

@@ -134,6 +134,7 @@ def process_reprocess_queue(sheets_service: SheetsService, gdrive_service: GDriv
         # Atualizar Google Sheets
         sheets_service.update_reprocessed_row(
             row_index=row_idx,
+            new_filename=new_filename,
             new_drive_url=new_drive_url,
             new_confianca="Validado (Manual)",
             new_nota="Validado manualmente"
@@ -193,7 +194,6 @@ def run_pipeline():
     qtd_baixa = 0
     total_pending_amount = 0.0
 
-
     with tempfile.TemporaryDirectory() as temp_dir:
         for i, file_info in enumerate(new_files, 1):
             filename = file_info["name"]
@@ -225,6 +225,7 @@ def run_pipeline():
             org_info = gdrive_service.organize_file(file_info, doc_data)
             drive_url = org_info.get("drive_url", "")
             new_name = org_info.get("new_filename", filename)
+            doc_data["nome_ficheiro_novo"] = new_name
 
             # Registar no Supabase (Base de dados de controlo)
             supabase_service.record_processed_file(doc_data, file_id, drive_url, new_name)
