@@ -725,10 +725,13 @@ class SheetsService:
             print(f"Erro ao anexar linha no GSheets API: {e}. A guardar localmente...")
             return self._append_local(doc_data, row_values, drive_url)
 
-    def reconcile_batch_invoices(self, batch_summaries: list):
+    def reconcile_batch_invoices(self, batch_summaries: list, supabase_service=None):
         """
-        Percorre as linhas da aba 'Registo' e associa o 'Nº Lote Associado'
-        a todas as faturas individuais que constem na lista de faturas agregadas de cada lote.
+        Percorre as linhas da aba 'Registo':
+        1. Associa o 'Nº Lote Associado' a todas as faturas e notas de crédito individuais que constem no lote.
+        2. Realiza validação matemática: Soma(Faturas) - Soma(Notas de Crédito) == Total Declarado no Lote.
+        3. Atualiza a coluna 'Nota' da linha do Resumo de Lote com o resultado da auditoria (✅ Conciliado ou ⚠️ Divergência).
+        4. Atualiza o estado no Supabase.
         """
         if not batch_summaries or self.is_offline or not self.service:
             return
@@ -746,25 +749,44 @@ class SheetsService:
             
             idx_doc = None
             idx_tipo = None
+            idx_val = None
             idx_lote = None
+            idx_nota = None
             for i, h in enumerate(headers):
                 if ("doc" in h or "nº" in h or "numero" in h) and "lote" not in h:
                     idx_doc = i
                 elif "tipo" in h:
                     idx_tipo = i
+                elif "valor" in h:
+                    idx_val = i
                 elif "lote" in h:
                     idx_lote = i
+                elif "nota" in h:
+                    idx_nota = i
 
             if idx_doc is None or idx_lote is None:
                 return
 
-            # Criar mapa de correspondência: {normalized_invoice_number: numero_lote}
+            # Estrutura de dados para controlo matemático de cada lote
+            batches_map = {}
             invoice_to_lote = {}
+
             for batch in batch_summaries:
                 lote_num = str(batch.get("numero_lote", "")).strip()
                 if not lote_num:
                     continue
-                agregadas = batch.get("lista_faturas_agregadas", [])
+                
+                total_decl = float(batch.get("valor_total_lote") or batch.get("valor_total") or 0.0)
+                agregadas = batch.get("lista_faturas_agregadas") or batch.get("faturas_agregadas") or []
+                
+                batches_map[lote_num] = {
+                    "total_declarado": total_decl,
+                    "esperados": len(agregadas),
+                    "encontrados": [],
+                    "soma_real": 0.0,
+                    "lote_row_idx": None
+                }
+
                 for f in agregadas:
                     if isinstance(f, dict):
                         f_num = str(f.get("numero", "")).strip()
@@ -772,29 +794,35 @@ class SheetsService:
                         f_num = str(f).strip()
                     if f_num:
                         invoice_to_lote[f_num.lower()] = lote_num
-                        # Também mapear dígitos apenas (ex: 29916327 de F/29916327)
                         digits = re.sub(r'\D', '', f_num)
                         if len(digits) >= 5:
                             invoice_to_lote[digits] = lote_num
 
-            # Percorrer faturas no Registo e preencher Nº Lote Associado
+            # Percorrer todas as linhas de documentos no Registo
             updated = False
-            for row_idx, r in enumerate(rows[1:], start=2):
+            for row_idx, r in enumerate(rows[1:], start=1):
                 if idx_doc >= len(r):
                     continue
-                tipo_val = r[idx_tipo].strip().lower() if idx_tipo is not None and idx_tipo < len(r) else ""
                 
-                # Se for o próprio Resumo de Lote, garantir que a coluna associado fica vazia
+                tipo_val = r[idx_tipo].strip().lower() if idx_tipo is not None and idx_tipo < len(r) else ""
+                doc_num = r[idx_doc].strip()
+
+                # 1. Se a linha for o próprio Resumo de Lote:
                 if "resumo" in tipo_val or "lote" in tipo_val:
-                    if idx_lote < len(r) and r[idx_lote].strip() == r[idx_doc].strip():
+                    if idx_lote < len(r) and r[idx_lote].strip() == doc_num:
                         r[idx_lote] = ""
                         updated = True
+                    # Registar a linha deste lote para posterior atualização da Nota
+                    if doc_num in batches_map:
+                        batches_map[doc_num]["lote_row_idx"] = row_idx
+                    else:
+                        digits = re.sub(r'\D', '', doc_num)
+                        if digits in batches_map:
+                            batches_map[digits]["lote_row_idx"] = row_idx
                     continue
 
-                doc_num = r[idx_doc].strip()
+                # 2. Se for Fatura ou Nota de Crédito:
                 current_lote = r[idx_lote].strip() if idx_lote < len(r) else ""
-                
-                # Procurar correspondência
                 matched_lote = None
                 if doc_num.lower() in invoice_to_lote:
                     matched_lote = invoice_to_lote[doc_num.lower()]
@@ -803,12 +831,65 @@ class SheetsService:
                     if digits and digits in invoice_to_lote:
                         matched_lote = invoice_to_lote[digits]
 
-                if matched_lote and current_lote != matched_lote:
-                    while len(r) <= idx_lote:
-                        r.append("")
-                    r[idx_lote] = matched_lote
-                    updated = True
-                    print(f"  [Lote Conciliado] Fatura '{doc_num}' associada ao Lote {matched_lote}.")
+                if matched_lote:
+                    # Atualizar coluna Nº Lote Associado
+                    if current_lote != matched_lote:
+                        while len(r) <= idx_lote:
+                            r.append("")
+                        r[idx_lote] = matched_lote
+                        updated = True
+                        print(f"  [Lote Conciliado] Documento '{doc_num}' associado ao Lote {matched_lote}.")
+
+                    # Ler valor monetário para a soma matemática
+                    val_float = 0.0
+                    if idx_val is not None and idx_val < len(r):
+                        raw_val_str = str(r[idx_val]).replace("€", "").replace(" ", "").replace(",", ".").strip()
+                        try:
+                            val_float = float(raw_val_str)
+                        except ValueError:
+                            val_float = 0.0
+
+                    # Se for Nota de Crédito, desconta (sinal negativo)
+                    if "crédito" in tipo_val or "credito" in tipo_val:
+                        val_float = -abs(val_float)
+
+                    if matched_lote in batches_map:
+                        batches_map[matched_lote]["encontrados"].append(doc_num)
+                        batches_map[matched_lote]["soma_real"] += val_float
+
+            # 3. Validação Matemática e Atualização da Nota em cada Lote
+            for lote_num, bdata in batches_map.items():
+                lote_row_i = bdata["lote_row_idx"]
+                total_decl = bdata["total_declarado"]
+                soma_real = bdata["soma_real"]
+                qtd_enc = len(bdata["encontrados"])
+                qtd_esp = bdata["esperados"]
+
+                # Tolerância de 5 cêntimos para arredondamentos
+                diff = abs(soma_real - total_decl)
+                is_conciliado = (diff < 0.05 and (qtd_enc >= qtd_esp or qtd_esp == 0))
+
+                if is_conciliado:
+                    nota_lote = f"✅ Lote 100% Conciliado ({qtd_enc} docs associados | Total: {soma_real:.2f} €)"
+                else:
+                    if qtd_esp > 0 and qtd_enc < qtd_esp:
+                        nota_lote = f"⚠️ Lote Incompleto / Divergente: Soma apurada ({soma_real:.2f} €) vs Total declarado ({total_decl:.2f} €) | Faltam {qtd_esp - qtd_enc} docs (encontrados {qtd_enc} de {qtd_esp})"
+                    else:
+                        nota_lote = f"⚠️ Divergência no Lote: Soma das faturas ({soma_real:.2f} €) difere do total do lote ({total_decl:.2f} €)"
+
+                # Atualizar nota na linha do Resumo de Lote no Sheets
+                if lote_row_i is not None and idx_nota is not None:
+                    target_row = rows[lote_row_i]
+                    while len(target_row) <= idx_nota:
+                        target_row.append("")
+                    if target_row[idx_nota] != nota_lote:
+                        target_row[idx_nota] = nota_lote
+                        updated = True
+                        print(f"  [Auditoria Lote {lote_num}] {nota_lote}")
+
+                # Atualizar Supabase se fornecido
+                if supabase_service:
+                    supabase_service.update_batch_reconciliation(lote_num, is_conciliado, round(soma_real, 2))
 
             if updated:
                 self.service.spreadsheets().values().update(
@@ -817,7 +898,7 @@ class SheetsService:
                     valueInputOption="USER_ENTERED",
                     body={'values': rows}
                 ).execute()
-                print("  [GSheets API] Aba 'Registo' atualizada com as associações de lote nas faturas.")
+                print("  [GSheets API] Aba 'Registo' atualizada com as associações e notas de auditoria de lote.")
         except Exception as e:
             print(f"Aviso ao conciliar faturas com lotes: {e}")
 

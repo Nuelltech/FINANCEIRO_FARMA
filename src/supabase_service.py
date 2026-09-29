@@ -138,6 +138,26 @@ class SupabaseService:
         state = self._load_local_state()
         return state.get("resumos_lote", [])
 
+    def update_batch_reconciliation(self, numero_lote: str, lote_conciliado: bool, valor_apurado: float = 0.0) -> bool:
+        """Atualiza o estado de conciliação matemática de um resumo de lote."""
+        if not self.is_offline and self.client:
+            try:
+                self.client.table("resumos_lote").update({
+                    "lote_conciliado": lote_conciliado,
+                    "valor_apurado": valor_apurado
+                }).eq("numero_lote", str(numero_lote)).execute()
+                return True
+            except Exception as e:
+                print(f"Aviso ao atualizar estado de conciliação no Supabase: {e}")
+
+        state = self._load_local_state()
+        for batch in state.get("resumos_lote", []):
+            if str(batch.get("numero_lote")) == str(numero_lote):
+                batch["lote_conciliado"] = lote_conciliado
+                batch["valor_apurado"] = valor_apurado
+        self._save_local_state(state)
+        return True
+
     def _load_local_state(self) -> dict:
         os.makedirs(os.path.dirname(self.local_state_path), exist_ok=True)
         if os.path.exists(self.local_state_path):

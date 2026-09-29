@@ -184,7 +184,7 @@ def run_pipeline():
         print("Nenhum ficheiro novo encontrado para processar.")
         sheets_service.save_new_suppliers(supplier_map)
         all_batches = supabase_service.get_all_batch_summaries()
-        sheets_service.reconcile_batch_invoices(all_batches)
+        sheets_service.reconcile_batch_invoices(all_batches, supabase_service)
         logger.log_execution(0, 0, 0, 0, 0.0, origem_instrucoes, "Sem ficheiros novos (fila de revisão e lotes verificados).")
         return
 
@@ -261,7 +261,8 @@ def run_pipeline():
     # Conciliar faturas com Resumos de Lote (associar Nº Lote às faturas componentes)
     print("\n[3c/4] A conciliar faturas com Resumos de Lote...")
     all_batches = supabase_service.get_all_batch_summaries()
-    sheets_service.reconcile_batch_invoices(all_batches)
+    sheets_service.reconcile_batch_invoices(all_batches, supabase_service)
+
 
     # 5. Registo Auditável de Execução na Aba 'Log de Execuções' do Google Sheets
     logger.log_execution(
