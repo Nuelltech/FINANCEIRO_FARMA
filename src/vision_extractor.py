@@ -12,7 +12,8 @@ Sua tarefa é analisar o documento (fatura, nota de crédito, resumo de lote ou 
 
 {
   "tipo_documento": "Fatura | Nota de Crédito | Resumo de Lote | Outro",
-  "fornecedor": "string",
+  "fornecedor": "string (nome do emissor/fornecedor)",
+  "nif_fornecedor": "string ou null (NIF/NIPC de 9 dígitos do fornecedor/emissor)",
   "farmacia": "Farmácia Baptista | Farmácia Campeã | Indeterminado",
   "numero_documento": "string ou null",
   "data_documento": "AAAA-MM-DD ou null (Data de Emissão / Fatura)",
@@ -27,7 +28,7 @@ Sua tarefa é analisar o documento (fatura, nota de crédito, resumo de lote ou 
   "motivo_baixa_confianca": "string ou null"
 }
 
-REGRAS ESTRITAS DE EXTRAÇÃO DE DATAS:
+REGRAS ESTRITAS DE EXTRAÇÃO:
 1. Responda APENAS com o JSON válido, sem texto explicativo antes ou depois.
 2. Distinga claramente a "data_documento" (Data de Emissão/Emitido em) da "data_vencimento" (Data Limite de Pagamento / Vencimento em).
 3. Para "data_vencimento", procure com extrema atenção por rótulos no documento como: "Vencimento em", "Data Vencimento", "Vencimento", "Data Limite de Pagamento", "Pagar até", "Venc.".
@@ -35,6 +36,7 @@ REGRAS ESTRITAS DE EXTRAÇÃO DE DATAS:
 5. NUNCA assuma data_vencimento igual a data_documento se existir um prazo de vencimento futuro ou condição de pagamento diferente de Pronto Pagamento.
 6. Se for um "Resumo de Lote", inclua "numero_lote" e no array "faturas_agregadas" a lista das faturas individuais com números e valores.
 7. Moeda deve ser sempre "EUR". Datas no formato YYYY-MM-DD. Valores numéricos como float (ex: 1250.45).
+8. Para "nif_fornecedor": extraia o NIF/NIPC do EMISSOR (fornecedor) do documento. Em Portugal aparece tipicamente junto aos labels "NIF:", "NIPC:", "Contribuinte:" ou como número de 9 dígitos no cabeçalho/rodapé. Se não for visível, devolva null. NÃO confunda com o NIF da farmácia (destinatário).
 """
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"

@@ -103,6 +103,10 @@ def run_pipeline():
     qtd_baixa = 0
     total_pending_amount = 0.0
 
+    # Carregar mapa de fornecedores (NIF → nome canónico) da aba 'Fornecedores'
+    print("\n[1b/4] A carregar mapa de fornecedores...")
+    supplier_map = sheets_service.load_supplier_map()
+
     with tempfile.TemporaryDirectory() as temp_dir:
         for i, file_info in enumerate(new_files, 1):
             filename = file_info["name"]
@@ -117,8 +121,8 @@ def run_pipeline():
             raw_data = extractor.extract_from_pdf(local_pdf, system_prompt=system_prompt)
             raw_data["ficheiro_original"] = filename
 
-            # Validação Cruzada & Duplo Filtro de Confiança
-            doc_data = ValidationRules.validate_extraction(raw_data, filename)
+            # Validação Cruzada & Duplo Filtro de Confiança + Normalização de Fornecedor por NIF
+            doc_data, supplier_map = ValidationRules.validate_extraction(raw_data, filename, supplier_map)
 
             # Verificar Deduplicação no Supabase
             if supabase_service.is_file_processed(file_id, doc_data.get("numero_documento"), doc_data.get("fornecedor")):
@@ -155,10 +159,15 @@ def run_pipeline():
                 total_pending_amount += val
 
             print(f"  Tipo: {doc_data['tipo_documento']} | Farmácia: {doc_data['farmacia']}")
-            print(f"  Fornecedor: {doc_data['fornecedor']} | N.º Doc: {doc_data['numero_documento']}")
+            print(f"  Fornecedor: {doc_data['fornecedor']} (NIF: {doc_data.get('nif_fornecedor') or 'n/d'}) | N.º Doc: {doc_data['numero_documento']}")
             print(f"  Valor: {doc_data['valor_total']} € | Confiança: {doc_data['confianca']}")
             print(f"  Novo Nome: {new_name}")
             print(f"  Destino: {org_info.get('subpath')}\n")
+
+    # Guardar novos fornecedores descobertos na aba 'Fornecedores'
+    print("[3b/4] A guardar novos fornecedores descobertos...")
+    sheets_service.save_new_suppliers(supplier_map)
+
 
     # 5. Registo Auditável de Execução na Aba 'Log de Execuções' do Google Sheets
     logger.log_execution(

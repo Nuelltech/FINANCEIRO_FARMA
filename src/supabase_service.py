@@ -61,6 +61,7 @@ class SupabaseService:
             "nome_ficheiro_original": doc_data.get("ficheiro_original", ""),
             "nome_ficheiro_novo": new_filename,
             "fornecedor": doc_data.get("fornecedor"),
+            "nif_fornecedor": doc_data.get("nif_fornecedor"),
             "farmacia": doc_data.get("farmacia"),
             "tipo_documento": doc_data.get("tipo_documento"),
             "numero_documento": doc_data.get("numero_documento"),

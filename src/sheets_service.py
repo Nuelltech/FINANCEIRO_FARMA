@@ -83,6 +83,119 @@ class SheetsService:
         except Exception as e:
             print(f"Erro ao verificar/criar aba '{tab_name}': {e}")
 
+    # ------------------------------------------------------------------
+    # Aba Fornecedores — Mapa NIF → Nome Canónico
+    # ------------------------------------------------------------------
+
+    FORNECEDORES_INICIAIS = [
+        ["500697370", "Cooprofar", "Distribuidor farmacêutico"],
+        ["500856998", "Alliance Healthcare", "Distribuidor farmacêutico"],
+        ["507280147", "NOS", "Telecomunicações"],
+        ["500755030", "Realcópia", "Equipamento de escritório"],
+        ["501177988", "Utilmédica", "Material médico"],
+        ["503000626", "Gameiros", "Material clínico"],
+        ["503041373", "Abbott Laboratórios", "Laboratório farmacêutico"],
+        ["505028136", "Uriach", "Laboratório farmacêutico"],
+        ["500138408", "Verlingue", "Corretora de seguros"],
+        ["503268415", "Águas do Interior", "Água e consumíveis"],
+        ["980341072", "NBC Consultores", "Consultoria"],
+    ]
+
+    def ensure_fornecedores_sheet_exists(self):
+        """Garante que a aba 'Fornecedores' existe com cabeçalhos e NIFs iniciais."""
+        if self.is_offline or not self.service:
+            return
+
+        try:
+            spreadsheet = self.service.spreadsheets().get(spreadsheetId=self.spreadsheet_id).execute()
+            sheet_names = [s.get('properties', {}).get('title') for s in spreadsheet.get('sheets', [])]
+
+            if 'Fornecedores' not in sheet_names:
+                print("  [GSheets API] A criar aba 'Fornecedores' com mapa inicial de NIFs...")
+                self.service.spreadsheets().batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body={'requests': [{'addSheet': {'properties': {'title': 'Fornecedores'}}}]}
+                ).execute()
+
+                header = [["NIF", "Nome Canónico", "Notas"]]
+                rows = header + self.FORNECEDORES_INICIAIS
+                self.service.spreadsheets().values().update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Fornecedores'!A1",
+                    valueInputOption="USER_ENTERED",
+                    body={'values': rows}
+                ).execute()
+                print(f"  [GSheets API] Aba 'Fornecedores' criada com {len(self.FORNECEDORES_INICIAIS)} fornecedores iniciais.")
+        except Exception as e:
+            print(f"Erro ao garantir aba 'Fornecedores': {e}")
+
+    def load_supplier_map(self) -> dict:
+        """
+        Lê a aba 'Fornecedores' e devolve um dicionário {nif: nome_canonico}.
+        Garante que a aba existe primeiro.
+        """
+        self.ensure_fornecedores_sheet_exists()
+
+        if self.is_offline or not self.service:
+            # Fallback offline: usar mapa interno
+            return {row[0]: row[1] for row in self.FORNECEDORES_INICIAIS if len(row) >= 2}
+
+        try:
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Fornecedores'!A2:B1000"
+            ).execute()
+            rows = res.get('values', [])
+            supplier_map = {}
+            for row in rows:
+                if len(row) >= 2:
+                    nif = str(row[0]).strip()
+                    nome = str(row[1]).strip()
+                    if nif and nome:
+                        supplier_map[nif] = nome
+            print(f"  [Fornecedores] Mapa carregado: {len(supplier_map)} fornecedores.")
+            return supplier_map
+        except Exception as e:
+            print(f"Aviso ao ler aba 'Fornecedores': {e}")
+            return {row[0]: row[1] for row in self.FORNECEDORES_INICIAIS if len(row) >= 2}
+
+    def save_new_suppliers(self, supplier_map: dict):
+        """
+        Compara o supplier_map atual com a aba 'Fornecedores' e acrescenta
+        quaisquer NIFs novos que não constem ainda na aba.
+        """
+        if self.is_offline or not self.service:
+            return
+
+        try:
+            # Ler NIFs já existentes na aba
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Fornecedores'!A2:A1000"
+            ).execute()
+            existing_nifs = set()
+            for row in res.get('values', []):
+                if row:
+                    existing_nifs.add(str(row[0]).strip())
+
+            # Filtrar apenas NIFs novos
+            new_rows = []
+            for nif, nome in supplier_map.items():
+                if nif and str(nif) not in existing_nifs:
+                    new_rows.append([str(nif), str(nome), "Descoberto automaticamente"])
+
+            if new_rows:
+                self.service.spreadsheets().values().append(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Fornecedores'!A:C",
+                    valueInputOption="USER_ENTERED",
+                    insertDataOption="INSERT_ROWS",
+                    body={'values': new_rows}
+                ).execute()
+                print(f"  [Fornecedores] {len(new_rows)} novo(s) fornecedor(es) acrescentado(s) à aba.")
+        except Exception as e:
+            print(f"Aviso ao guardar novos fornecedores: {e}")
+
     def ensure_resumo_sheet_exists(self):
         """Cria e atualiza a aba 'Resumo Financeiro' com fórmulas dinâmicas do Google Sheets."""
         default_suppliers = ["Cooprofar", "Alliance Healthcare", "NOS", "Realcópia", "Utilmédica"]
@@ -202,11 +315,12 @@ class SheetsService:
             "Data Pagamento",
             "Confiança",
             "Ficheiro",
-            "Nota"
+            "Nota",
+            "NIF Fornecedor"
         ]
         self.ensure_sheet_tab_exists("Registo", [header])
         
-        # Garantir que a linha 1 da aba Registo tem os 13 cabeçalhos e migrar registos existentes se necessário
+        # Garantir que a linha 1 tem os 14 cabeçalhos e migrar registos existentes se necessário
         if not self.is_offline and self.service:
             try:
                 res = self.service.spreadsheets().values().get(
@@ -218,16 +332,18 @@ class SheetsService:
                 if rows and len(rows) > 0:
                     old_headers = [str(c).strip() for c in rows[0]]
                     has_vencimento = any("vencimento" in h.lower() for h in old_headers)
+                    has_nif = any("nif" in h.lower() for h in old_headers)
                     
                     if not has_vencimento:
-                        print("  [GSheets API] A migrar aba 'Registo' para incluir coluna 'Data Vencimento'...")
+                        # Migração: 12 → 14 colunas (adiciona Data Vencimento + NIF Fornecedor)
+                        print("  [GSheets API] A migrar aba 'Registo' para 14 colunas (Data Vencimento + NIF Fornecedor)...")
                         new_rows = [header]
                         
                         header_map = {}
                         for idx, h in enumerate(old_headers):
                             hl = h.lower()
-                            if "doc" in hl or "nº" in hl or "numero" in hl:
-                                if "lote" not in hl: header_map["Nº Documento"] = idx
+                            if ("doc" in hl or "nº" in hl or "numero" in hl) and "lote" not in hl:
+                                header_map["Nº Documento"] = idx
                             if "tipo" in hl: header_map["Tipo"] = idx
                             if "fornecedor" in hl: header_map["Fornecedor"] = idx
                             if "farmá" in hl or "farmacia" in hl: header_map["Farmácia"] = idx
@@ -247,6 +363,8 @@ class SheetsService:
                                     data_i = header_map.get("Data")
                                     val = r[data_i] if data_i is not None and data_i < len(r) else ""
                                     new_r.append(val)
+                                elif target == "NIF Fornecedor":
+                                    new_r.append("")  # vazio para registos antigos
                                 else:
                                     i = header_map.get(target)
                                     val = r[i] if i is not None and i < len(r) else ""
@@ -264,11 +382,34 @@ class SheetsService:
                             valueInputOption="USER_ENTERED",
                             body={'values': new_rows}
                         ).execute()
-                        print("  [GSheets API] Aba 'Registo' migrada com sucesso para 13 colunas.")
-                    else:
+                        print("  [GSheets API] Aba 'Registo' migrada com sucesso para 14 colunas.")
+                    elif not has_nif:
+                        # Migração: 13 → 14 colunas (apenas adiciona NIF Fornecedor na col N)
+                        print("  [GSheets API] A adicionar coluna 'NIF Fornecedor' (col N) à aba 'Registo'...")
+                        new_rows = [header]
+                        for r in rows[1:]:
+                            new_r = list(r)
+                            while len(new_r) < 13:
+                                new_r.append("")
+                            new_r.append("")  # NIF Fornecedor vazio para registos antigos
+                            new_rows.append(new_r)
+                        
+                        self.service.spreadsheets().values().clear(
+                            spreadsheetId=self.spreadsheet_id,
+                            range="'Registo'!A1:Z1000"
+                        ).execute()
                         self.service.spreadsheets().values().update(
                             spreadsheetId=self.spreadsheet_id,
-                            range="'Registo'!A1:M1",
+                            range="'Registo'!A1",
+                            valueInputOption="USER_ENTERED",
+                            body={'values': new_rows}
+                        ).execute()
+                        print("  [GSheets API] Coluna 'NIF Fornecedor' adicionada com sucesso.")
+                    else:
+                        # Apenas garantir que o cabeçalho está correto
+                        self.service.spreadsheets().values().update(
+                            spreadsheetId=self.spreadsheet_id,
+                            range="'Registo'!A1:N1",
                             valueInputOption="USER_ENTERED",
                             body={'values': [header]}
                         ).execute()
@@ -340,6 +481,7 @@ class SheetsService:
         existing_headers = self.get_sheet_headers("Registo")
 
         data_venc = str(doc_data.get("data_vencimento") or doc_data.get("data_documento") or "")
+        nif_fornecedor = str(doc_data.get("nif_fornecedor") or "")
 
         mapping = {
             "Nº Documento": str(doc_data.get("numero_documento") or ""),
@@ -355,7 +497,8 @@ class SheetsService:
             "Confiança": str(doc_data.get("confianca") or "Baixa"),
             "Ficheiro": str(drive_url or ""),
             "Ficheiro (link Drive)": str(drive_url or ""),
-            "Nota": str(doc_data.get("nota") or "")
+            "Nota": str(doc_data.get("nota") or ""),
+            "NIF Fornecedor": nif_fornecedor,
         }
 
         if existing_headers:
@@ -364,6 +507,8 @@ class SheetsService:
                 col_clean = col.strip()
                 if "fatura" in col_clean.lower() or "ficheiro" in col_clean.lower() or "link" in col_clean.lower():
                     row_values.append(str(drive_url or ""))
+                elif "nif" in col_clean.lower():
+                    row_values.append(nif_fornecedor)
                 elif "lote" in col_clean.lower():
                     row_values.append(str(doc_data.get("numero_lote_associado") or doc_data.get("numero_lote") or ""))
                 elif "vencimento" in col_clean.lower() or "limite" in col_clean.lower():
