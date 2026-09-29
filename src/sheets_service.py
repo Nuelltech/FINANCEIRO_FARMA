@@ -185,35 +185,43 @@ class SheetsService:
 
     def ensure_resumo_sheet_exists(self):
         """
-        Gere a aba 'Resumo Financeiro' de forma não destrutiva:
-        - Se a aba NÃO existir → cria o template completo com fórmulas e filtro de datas.
-        - Se a aba JÁ EXISTIR → não toca na estrutura; apenas adiciona linhas
-          de fornecedores novos no fundo da tabela 'Balanço por Fornecedor'.
-        As fórmulas SOMA.SE.S leem o Registo dinamicamente com suporte a filtro de intervalo de datas (B2 e D2).
+        Gere a aba 'Resumo Financeiro':
+        - Se a aba NÃO existir ou estiver sem o template completo → cria/recria o template completo com fórmulas e filtro de datas.
+        - Se a aba JÁ EXISTIR com o template válido → apenas adiciona novos fornecedores na linha 14+.
         """
         if self.is_offline or not self.service:
             return
 
-        # Verificar se a aba já existe
+        # Verificar se a aba existe e se tem o template completo
         try:
             spreadsheet = self.service.spreadsheets().get(spreadsheetId=self.spreadsheet_id).execute()
             sheet_names = [s.get('properties', {}).get('title') for s in spreadsheet.get('sheets', [])]
             tab_exists = 'Resumo Financeiro' in sheet_names
+            
+            has_template = False
+            if tab_exists:
+                res = self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Resumo Financeiro'!A1:E15"
+                ).execute()
+                vals = res.get('values', [])
+                has_template = len(vals) >= 10 and any("RESUMO POR FARMÁCIA" in str(r) for r in vals)
         except Exception as e:
             print(f"Aviso ao verificar aba 'Resumo Financeiro': {e}")
             return
 
         if not tab_exists:
-            # ── Primeira vez: criar o template completo ──────────────────────
-            print("  [GSheets API] Aba 'Resumo Financeiro' não existe. A criar template com filtro de datas...")
-            self._create_resumo_template()
+            print("  [GSheets API] Aba 'Resumo Financeiro' não existe. A criar aba e template completo...")
+            self._create_resumo_template(create_tab=True)
+        elif not has_template:
+            print("  [GSheets API] Aba 'Resumo Financeiro' sem template válido. A restaurar template completo...")
+            self._create_resumo_template(create_tab=False)
         else:
-            # ── Aba já existe: apenas adicionar novos fornecedores ────────────
             self._append_new_suppliers_to_resumo()
 
-    def _create_resumo_template(self):
+    def _create_resumo_template(self, create_tab: bool = True):
         """Cria o template completo da aba 'Resumo Financeiro' com filtro de datas (B2 e D2)."""
-        # Descobrir APENAS fornecedores reais que já constem no Registo
+        # Descobrir APENAS fornecedores reais e ÚNICOS que já constem no Registo
         suppliers = []
         try:
             res = self.service.spreadsheets().values().get(
@@ -284,12 +292,17 @@ class SheetsService:
             ])
 
         try:
-            # Criar a aba
-            self.service.spreadsheets().batchUpdate(
-                spreadsheetId=self.spreadsheet_id,
-                body={'requests': [{'addSheet': {'properties': {'title': 'Resumo Financeiro'}}}]}
-            ).execute()
-            # Escrever o template
+            if create_tab:
+                self.service.spreadsheets().batchUpdate(
+                    spreadsheetId=self.spreadsheet_id,
+                    body={'requests': [{'addSheet': {'properties': {'title': 'Resumo Financeiro'}}}]}
+                ).execute()
+            else:
+                self.service.spreadsheets().values().clear(
+                    spreadsheetId=self.spreadsheet_id,
+                    range="'Resumo Financeiro'!A1:Z200"
+                ).execute()
+
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.spreadsheet_id,
                 range="'Resumo Financeiro'!A1",
@@ -323,10 +336,10 @@ class SheetsService:
                 spreadsheetId=self.spreadsheet_id,
                 range="'Registo'!C2:C1000"
             ).execute()
-            registo_suppliers = set()
+            registo_suppliers = []
             for r in res2.get('values', []):
-                if r and r[0].strip() and r[0].strip().lower() != "fornecedor":
-                    registo_suppliers.add(r[0].strip())
+                if r and r[0].strip() and r[0].strip().lower() != "fornecedor" and r[0].strip() not in registo_suppliers:
+                    registo_suppliers.append(r[0].strip())
 
             # Descobrir fornecedores que ainda não têm linha no Resumo Financeiro
             novos = [s for s in registo_suppliers if s not in existing_in_resumo]
@@ -357,6 +370,7 @@ class SheetsService:
             print(f"  [GSheets API] {len(new_rows)} novo(s) fornecedor(es) adicionado(s) ao 'Resumo Financeiro'.")
         except Exception as e:
             print(f"Aviso ao actualizar fornecedores no 'Resumo Financeiro': {e}")
+
 
 
 
@@ -798,9 +812,11 @@ class SheetsService:
                         if len(digits) >= 5:
                             invoice_to_lote[digits] = lote_num
 
-            # Percorrer todas as linhas de documentos no Registo
-            updated = False
-            for row_idx, r in enumerate(rows[1:], start=1):
+            # Estrutura para atualizações pontuais de células (para nunca sobrescrever a tabela nem apagar fórmulas de links)
+            cell_updates = []
+
+            # Percorrer todas as linhas de documentos no Registo (linha 2 em diante no Sheets)
+            for row_idx, r in enumerate(rows[1:], start=2):
                 if idx_doc >= len(r):
                     continue
                 
@@ -810,8 +826,11 @@ class SheetsService:
                 # 1. Se a linha for o próprio Resumo de Lote:
                 if "resumo" in tipo_val or "lote" in tipo_val:
                     if idx_lote < len(r) and r[idx_lote].strip() == doc_num:
-                        r[idx_lote] = ""
-                        updated = True
+                        col_lote_letter = chr(65 + idx_lote)
+                        cell_updates.append({
+                            'range': f"'Registo'!{col_lote_letter}{row_idx}",
+                            'values': [[""]]
+                        })
                     # Registar a linha deste lote para posterior atualização da Nota
                     if doc_num in batches_map:
                         batches_map[doc_num]["lote_row_idx"] = row_idx
@@ -832,13 +851,14 @@ class SheetsService:
                         matched_lote = invoice_to_lote[digits]
 
                 if matched_lote:
-                    # Atualizar coluna Nº Lote Associado
+                    # Atualizar coluna Nº Lote Associado na célula específica
                     if current_lote != matched_lote:
-                        while len(r) <= idx_lote:
-                            r.append("")
-                        r[idx_lote] = matched_lote
-                        updated = True
-                        print(f"  [Lote Conciliado] Documento '{doc_num}' associado ao Lote {matched_lote}.")
+                        col_lote_letter = chr(65 + idx_lote)
+                        cell_updates.append({
+                            'range': f"'Registo'!{col_lote_letter}{row_idx}",
+                            'values': [[matched_lote]]
+                        })
+                        print(f"  [Lote Conciliado] Documento '{doc_num}' associado ao Lote {matched_lote} (Linha {row_idx}).")
 
                     # Ler valor monetário para a soma matemática
                     val_float = 0.0
@@ -877,30 +897,32 @@ class SheetsService:
                     else:
                         nota_lote = f"⚠️ Divergência no Lote: Soma das faturas ({soma_real:.2f} €) difere do total do lote ({total_decl:.2f} €)"
 
-                # Atualizar nota na linha do Resumo de Lote no Sheets
+                # Atualizar nota na linha do Resumo de Lote no Sheets via célula pontual
                 if lote_row_i is not None and idx_nota is not None:
-                    target_row = rows[lote_row_i]
-                    while len(target_row) <= idx_nota:
-                        target_row.append("")
-                    if target_row[idx_nota] != nota_lote:
-                        target_row[idx_nota] = nota_lote
-                        updated = True
-                        print(f"  [Auditoria Lote {lote_num}] {nota_lote}")
+                    col_nota_letter = chr(65 + idx_nota)
+                    cell_updates.append({
+                        'range': f"'Registo'!{col_nota_letter}{lote_row_i}",
+                        'values': [[nota_lote]]
+                    })
+                    print(f"  [Auditoria Lote {lote_num}] {nota_lote}")
 
                 # Atualizar Supabase se fornecido
                 if supabase_service:
                     supabase_service.update_batch_reconciliation(lote_num, is_conciliado, round(soma_real, 2))
 
-            if updated:
-                self.service.spreadsheets().values().update(
+            # Executar todas as atualizações de células pontuais sem tocar em nenhuma outra coluna (como Ficheiro)
+            if cell_updates:
+                self.service.spreadsheets().values().batchUpdate(
                     spreadsheetId=self.spreadsheet_id,
-                    range="'Registo'!A1",
-                    valueInputOption="USER_ENTERED",
-                    body={'values': rows}
+                    body={
+                        'valueInputOption': 'USER_ENTERED',
+                        'data': cell_updates
+                    }
                 ).execute()
-                print("  [GSheets API] Aba 'Registo' atualizada com as associações e notas de auditoria de lote.")
+                print(f"  [GSheets API] {len(cell_updates)} célula(s) de lote e notas atualizadas no 'Registo'.")
         except Exception as e:
             print(f"Aviso ao conciliar faturas com lotes: {e}")
+
 
 
     def _append_local(self, doc_data: dict, row_values: list, drive_url: str) -> bool:
