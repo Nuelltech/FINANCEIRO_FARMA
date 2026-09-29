@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import re
 import tempfile
 import datetime
 
@@ -57,6 +58,87 @@ def load_instructions(gdrive_service: GDriveService) -> tuple:
         print(f"  [Aviso] Falha ao ler Google Docs ({e}). A recorrer às instruções nativas do sistema...")
         return DEFAULT_SYSTEM_PROMPT, "", "Instruções Nativas do Agente"
 
+def process_reprocess_queue(sheets_service: SheetsService, gdrive_service: GDriveService, supabase_service: SupabaseService, supplier_map: dict):
+    """
+    Verifica se existem linhas marcadas para reprocessamento na aba 'Registo' (Reprocessar = Sim).
+    Para cada linha marcada:
+    1. Normaliza os dados editados pelo utilizador.
+    2. Move/renomeia o ficheiro PDF no Google Drive para a pasta de destino correta.
+    3. Atualiza o registo no Supabase com os dados corrigidos.
+    4. Atualiza a linha no Google Sheets com o novo link, Confiança='Validado (Manual)' e Reprocessar='Concluído'.
+    """
+    items = sheets_service.get_rows_to_reprocess()
+    if not items:
+        return
+
+    print(f"\n[Revisão Manual] A processar {len(items)} linha(s) marcadas com 'Reprocessar = Sim' no Sheets...")
+    for item in items:
+        row_idx = item["row_index"]
+        num_doc = item["numero_documento"] or "SEM_NUM"
+        tipo_doc = item["tipo_documento"] or "Fatura"
+        farmacia = item["farmacia"] or "Indeterminado"
+        raw_fornecedor = item["fornecedor"] or "DESCONHECIDO"
+        raw_nif = item.get("nif_fornecedor")
+        data_doc = item["data_documento"] or "2026-01-01"
+        file_url = item["file_url"]
+
+        # Normalizar fornecedor se necessário
+        fornecedor, nif_limpo, supplier_map = ValidationRules.normalize_supplier(raw_fornecedor, raw_nif, supplier_map)
+
+        # Extrair drive_file_id do link
+        file_id = None
+        if "/d/" in file_url:
+            m = re.search(r"/d/([a-zA-Z0-9_-]+)", file_url)
+            if m:
+                file_id = m.group(1)
+        elif "id=" in file_url:
+            m = re.search(r"id=([a-zA-Z0-9_-]+)", file_url)
+            if m:
+                file_id = m.group(1)
+
+        # Determinar pasta e nome limpo
+        categoria = ValidationRules.determine_folder_category(tipo_doc)
+        if farmacia in ["Farmácia Baptista", "Farmácia Campeã"]:
+            subpath = f"{farmacia}/{categoria}"
+        else:
+            subpath = f"Indeterminado/{categoria}"
+
+        forn_clean = fornecedor.replace(" ", "_")
+        farm_clean = farmacia.replace(" ", "_")
+        num_clean = str(num_doc).replace("/", "_").replace("\\", "_")
+        new_filename = f"{forn_clean}_{farm_clean}_{data_doc}_{num_clean}.pdf"
+
+        new_drive_url = file_url
+        if file_id:
+            move_res = gdrive_service.move_and_rename_file(file_id, new_filename, subpath)
+            new_drive_url = move_res.get("drive_url", file_url)
+            print(f"  -> Linha {row_idx}: Documento '{num_doc}' movido para '{subpath}/{new_filename}'")
+
+        # Atualizar Supabase
+        doc_data_update = {
+            "fornecedor": fornecedor,
+            "nif_fornecedor": nif_limpo,
+            "farmacia": farmacia,
+            "tipo_documento": tipo_doc,
+            "numero_documento": num_doc,
+            "data_documento": data_doc,
+            "data_vencimento": item.get("data_vencimento"),
+            "valor_total": float(str(item["valor_total"]).replace(",", ".")) if item.get("valor_total") else None,
+            "confianca": "Validado (Manual)",
+            "motivo_baixa_confianca": None,
+            "numero_lote_associado": item.get("numero_lote_associado")
+        }
+        if file_id:
+            supabase_service.record_processed_file(doc_data_update, file_id, new_drive_url, new_filename)
+
+        # Atualizar Google Sheets
+        sheets_service.update_reprocessed_row(
+            row_index=row_idx,
+            new_drive_url=new_drive_url,
+            new_confianca="Validado (Manual)",
+            new_nota="Validado manualmente"
+        )
+
 def run_pipeline():
     print("=" * 80)
     print("   PIPELINE DIÁRIO DE PROCESSAMENTO DE FATURAS - FARMÁCIA PILOTO (FASE 1)   ")
@@ -87,25 +169,30 @@ def run_pipeline():
     # 2. Carregamento Dinâmico de Instruções (Google Docs vs TXT Fallback)
     system_prompt, context_instructions, origem_instrucoes = load_instructions(gdrive_service)
 
-    # 3. Deteção de ficheiros novos no Google Drive (ignorando _Config Agente)
-    print("\n[1/4] A consultar ficheiros novos no Google Drive...")
+    # 3. Carregar mapa de fornecedores (NIF → nome canónico)
+    print("\n[1/4] A carregar mapa de fornecedores...")
+    supplier_map = sheets_service.load_supplier_map()
+
+    # 4. Processar fila de revisão manual (Reprocessar = Sim no Google Sheets)
+    process_reprocess_queue(sheets_service, gdrive_service, supabase_service, supplier_map)
+
+    # 5. Deteção de ficheiros novos no Google Drive (ignorando _Config Agente)
+    print("\n[2/4] A consultar ficheiros novos no Google Drive...")
     new_files = gdrive_service.list_new_files()
     if not new_files:
         print("Nenhum ficheiro novo encontrado para processar.")
-        logger.log_execution(0, 0, 0, 0, 0.0, origem_instrucoes, "Sem ficheiros novos.")
+        sheets_service.save_new_suppliers(supplier_map)
+        logger.log_execution(0, 0, 0, 0, 0.0, origem_instrucoes, "Sem ficheiros novos (fila de revisão verificada).")
         return
 
     print(f"Encontrados {len(new_files)} ficheiro(s) novo(s) para analisar.\n")
 
-    # 4. Processamento de cada documento
+    # 6. Processamento de cada novo documento
     qtd_alta = 0
     qtd_media = 0
     qtd_baixa = 0
     total_pending_amount = 0.0
 
-    # Carregar mapa de fornecedores (NIF → nome canónico) da aba 'Fornecedores'
-    print("\n[1b/4] A carregar mapa de fornecedores...")
-    supplier_map = sheets_service.load_supplier_map()
 
     with tempfile.TemporaryDirectory() as temp_dir:
         for i, file_info in enumerate(new_files, 1):

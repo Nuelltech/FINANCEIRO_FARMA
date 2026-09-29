@@ -398,11 +398,12 @@ class SheetsService:
             "Confiança",
             "Ficheiro",
             "Nota",
-            "NIF Fornecedor"
+            "NIF Fornecedor",
+            "Reprocessar"
         ]
         self.ensure_sheet_tab_exists("Registo", [header])
         
-        # Garantir que a linha 1 tem os 14 cabeçalhos e migrar registos existentes se necessário
+        # Garantir que a linha 1 tem os 15 cabeçalhos e migrar registos existentes se necessário
         if not self.is_offline and self.service:
             try:
                 res = self.service.spreadsheets().values().get(
@@ -413,67 +414,39 @@ class SheetsService:
                 
                 if rows and len(rows) > 0:
                     old_headers = [str(c).strip() for c in rows[0]]
-                    has_vencimento = any("vencimento" in h.lower() for h in old_headers)
+                    has_reprocessar = any("reprocessar" in h.lower() for h in old_headers)
                     has_nif = any("nif" in h.lower() for h in old_headers)
+                    has_vencimento = any("vencimento" in h.lower() for h in old_headers)
                     
-                    if not has_vencimento:
-                        # Migração: 12 → 14 colunas (adiciona Data Vencimento + NIF Fornecedor)
-                        print("  [GSheets API] A migrar aba 'Registo' para 14 colunas (Data Vencimento + NIF Fornecedor)...")
-                        new_rows = [header]
-                        
+                    if not has_reprocessar or not has_nif or not has_vencimento or len(old_headers) < len(header):
+                        print("  [GSheets API] A atualizar cabeçalhos da aba 'Registo' para 15 colunas...")
                         header_map = {}
                         for idx, h in enumerate(old_headers):
                             hl = h.lower()
                             if ("doc" in hl or "nº" in hl or "numero" in hl) and "lote" not in hl:
                                 header_map["Nº Documento"] = idx
-                            if "tipo" in hl: header_map["Tipo"] = idx
-                            if "fornecedor" in hl: header_map["Fornecedor"] = idx
-                            if "farmá" in hl or "farmacia" in hl: header_map["Farmácia"] = idx
-                            if "data" in hl and "vencimento" not in hl and "pagamento" not in hl: header_map["Data"] = idx
-                            if "valor" in hl: header_map["Valor (€)"] = idx
-                            if "lote" in hl: header_map["Nº Lote Associado"] = idx
-                            if "estado" in hl or ("pagamento" in hl and "data" not in hl): header_map["Estado Pagamento"] = idx
-                            if "data" in hl and "pagamento" in hl: header_map["Data Pagamento"] = idx
-                            if "confian" in hl or "confia" in hl: header_map["Confiança"] = idx
-                            if "ficheiro" in hl or "link" in hl: header_map["Ficheiro"] = idx
-                            if "nota" in hl or "observa" in hl: header_map["Nota"] = idx
+                            elif "tipo" in hl: header_map["Tipo"] = idx
+                            elif "fornecedor" in hl and "nif" not in hl: header_map["Fornecedor"] = idx
+                            elif "farmá" in hl or "farmacia" in hl: header_map["Farmácia"] = idx
+                            elif "data" in hl and "vencimento" not in hl and "pagamento" not in hl: header_map["Data"] = idx
+                            elif "vencimento" in hl: header_map["Data Vencimento"] = idx
+                            elif "valor" in hl: header_map["Valor (€)"] = idx
+                            elif "lote" in hl: header_map["Nº Lote Associado"] = idx
+                            elif "estado" in hl or ("pagamento" in hl and "data" not in hl): header_map["Estado Pagamento"] = idx
+                            elif "data" in hl and "pagamento" in hl: header_map["Data Pagamento"] = idx
+                            elif "confian" in hl or "confia" in hl: header_map["Confiança"] = idx
+                            elif "ficheiro" in hl or "link" in hl: header_map["Ficheiro"] = idx
+                            elif "nota" in hl or "observa" in hl: header_map["Nota"] = idx
+                            elif "nif" in hl: header_map["NIF Fornecedor"] = idx
+                            elif "reprocessar" in hl: header_map["Reprocessar"] = idx
                         
+                        new_rows = [header]
                         for r in rows[1:]:
                             new_r = []
                             for target in header:
-                                if target == "Data Vencimento":
-                                    data_i = header_map.get("Data")
-                                    val = r[data_i] if data_i is not None and data_i < len(r) else ""
-                                    new_r.append(val)
-                                elif target == "NIF Fornecedor":
-                                    new_r.append("")  # vazio para registos antigos
-                                else:
-                                    i = header_map.get(target)
-                                    val = r[i] if i is not None and i < len(r) else ""
-                                    new_r.append(val)
-                            new_rows.append(new_r)
-                        
-                        self.service.spreadsheets().values().clear(
-                            spreadsheetId=self.spreadsheet_id,
-                            range="'Registo'!A1:Z1000"
-                        ).execute()
-                        
-                        self.service.spreadsheets().values().update(
-                            spreadsheetId=self.spreadsheet_id,
-                            range="'Registo'!A1",
-                            valueInputOption="USER_ENTERED",
-                            body={'values': new_rows}
-                        ).execute()
-                        print("  [GSheets API] Aba 'Registo' migrada com sucesso para 14 colunas.")
-                    elif not has_nif:
-                        # Migração: 13 → 14 colunas (apenas adiciona NIF Fornecedor na col N)
-                        print("  [GSheets API] A adicionar coluna 'NIF Fornecedor' (col N) à aba 'Registo'...")
-                        new_rows = [header]
-                        for r in rows[1:]:
-                            new_r = list(r)
-                            while len(new_r) < 13:
-                                new_r.append("")
-                            new_r.append("")  # NIF Fornecedor vazio para registos antigos
+                                idx = header_map.get(target)
+                                val = r[idx] if idx is not None and idx < len(r) else ""
+                                new_r.append(val)
                             new_rows.append(new_r)
                         
                         self.service.spreadsheets().values().clear(
@@ -486,12 +459,11 @@ class SheetsService:
                             valueInputOption="USER_ENTERED",
                             body={'values': new_rows}
                         ).execute()
-                        print("  [GSheets API] Coluna 'NIF Fornecedor' adicionada com sucesso.")
+                        print("  [GSheets API] Aba 'Registo' atualizada com sucesso para 15 colunas.")
                     else:
-                        # Apenas garantir que o cabeçalho está correto
                         self.service.spreadsheets().values().update(
                             spreadsheetId=self.spreadsheet_id,
-                            range="'Registo'!A1:N1",
+                            range="'Registo'!A1:O1",
                             valueInputOption="USER_ENTERED",
                             body={'values': [header]}
                         ).execute()
@@ -513,6 +485,115 @@ class SheetsService:
         except Exception as e:
             print(f"Aviso ao ler cabeçalho de '{tab_name}': {e}")
         return []
+
+    def get_rows_to_reprocess(self) -> list:
+        """
+        Lê a aba 'Registo' e devolve linhas onde a coluna 'Reprocessar' está marcada como 'Sim' / 'sim' / '1' / 'true'.
+        """
+        if self.is_offline or not self.service:
+            return []
+        try:
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Registo'!A1:O1000"
+            ).execute()
+            rows = res.get('values', [])
+            if not rows or len(rows) <= 1:
+                return []
+
+            headers = [str(c).strip().lower() for c in rows[0]]
+            
+            # Mapear índices
+            def get_idx(patterns):
+                for p in patterns:
+                    for i, h in enumerate(headers):
+                        if p in h:
+                            return i
+                return None
+
+            idx_doc = get_idx(["doc", "nº", "numero"])
+            idx_tipo = get_idx(["tipo"])
+            idx_forn = get_idx(["fornecedor"])
+            idx_farm = get_idx(["farmá", "farmacia"])
+            idx_data = get_idx(["data"])
+            idx_venc = get_idx(["vencimento"])
+            idx_val = get_idx(["valor"])
+            idx_lote = get_idx(["lote"])
+            idx_file = get_idx(["ficheiro", "link"])
+            idx_nota = get_idx(["nota"])
+            idx_nif = get_idx(["nif"])
+            idx_reproc = get_idx(["reprocessar"])
+
+            if idx_reproc is None:
+                return []
+
+            items_to_reprocess = []
+            for row_num, r in enumerate(rows[1:], start=2):
+                if idx_reproc < len(r):
+                    val_reproc = str(r[idx_reproc]).strip().lower()
+                    if val_reproc in ["sim", "s", "yes", "y", "true", "1", "x", "reprocessar"]:
+                        def val_at(idx):
+                            return r[idx].strip() if idx is not None and idx < len(r) else ""
+
+                        items_to_reprocess.append({
+                            "row_index": row_num,
+                            "numero_documento": val_at(idx_doc),
+                            "tipo_documento": val_at(idx_tipo),
+                            "fornecedor": val_at(idx_forn),
+                            "farmacia": val_at(idx_farm),
+                            "data_documento": val_at(idx_data),
+                            "data_vencimento": val_at(idx_venc),
+                            "valor_total": val_at(idx_val),
+                            "numero_lote_associado": val_at(idx_lote),
+                            "file_url": val_at(idx_file),
+                            "nota": val_at(idx_nota),
+                            "nif_fornecedor": val_at(idx_nif),
+                        })
+            return items_to_reprocess
+        except Exception as e:
+            print(f"Aviso ao verificar linhas para reprocessar: {e}")
+            return []
+
+    def update_reprocessed_row(self, row_index: int, new_drive_url: str = None, new_confianca: str = "Validado (Manual)", new_nota: str = ""):
+        """
+        Atualiza o estado de uma linha reprocessada na aba 'Registo':
+        - Atualiza Ficheiro (se novo link)
+        - Confiança = 'Validado (Manual)'
+        - Nota = limpa ou atualizada
+        - Reprocessar = 'Concluído'
+        """
+        if self.is_offline or not self.service:
+            return
+        try:
+            # Ler cabeçalhos para saber as colunas certas
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'Registo'!A{row_index}:O{row_index}"
+            ).execute()
+            row_vals = res.get('values', [[]])[0]
+            while len(row_vals) < 15:
+                row_vals.append("")
+
+            headers = self.get_sheet_headers("Registo")
+            for i, h in enumerate(headers):
+                hl = h.lower()
+                if ("ficheiro" in hl or "link" in hl) and new_drive_url:
+                    row_vals[i] = new_drive_url
+                elif "confian" in hl:
+                    row_vals[i] = new_confianca
+                elif "nota" in hl:
+                    row_vals[i] = new_nota
+                elif "reprocessar" in hl:
+                    row_vals[i] = "Concluído"
+
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"'Registo'!A{row_index}:O{row_index}",
+                valueInputOption="USER_ENTERED",
+                body={'values': [row_vals]}
+            ).execute()
+        except Exception as e:
+            print(f"Erro ao atualizar linha {row_index} reprocessada: {e}")
 
     def append_execution_log(self, log_data: dict) -> bool:
         """Regista uma linha de auditoria na aba 'Log de Execuções'."""
@@ -556,17 +637,13 @@ class SheetsService:
         self.ensure_registo_sheet_exists()
         self.ensure_resumo_sheet_exists()
 
-        if doc_data.get("tipo_documento") == "Resumo de Lote" and doc_data.get("confianca") != "Baixa":
-            print("  [Opção B PRD] Resumo de Lote registado no Supabase; omitida linha financeira no Sheets.")
-            return True
-
         existing_headers = self.get_sheet_headers("Registo")
 
         data_venc = str(doc_data.get("data_vencimento") or doc_data.get("data_documento") or "")
         nif_fornecedor = str(doc_data.get("nif_fornecedor") or "")
 
         mapping = {
-            "Nº Documento": str(doc_data.get("numero_documento") or ""),
+            "Nº Documento": str(doc_data.get("numero_documento") or doc_data.get("numero_lote") or ""),
             "Tipo": str(doc_data.get("tipo_documento") or "A Rever"),
             "Fornecedor": str(doc_data.get("fornecedor") or ""),
             "Farmácia": str(doc_data.get("farmacia") or "Indeterminado"),
@@ -581,6 +658,7 @@ class SheetsService:
             "Ficheiro (link Drive)": str(drive_url or ""),
             "Nota": str(doc_data.get("nota") or ""),
             "NIF Fornecedor": nif_fornecedor,
+            "Reprocessar": ""
         }
 
         if existing_headers:
@@ -599,11 +677,13 @@ class SheetsService:
                     row_values.append(str(doc_data.get("confianca") or "Baixa"))
                 elif "nota" in col_clean.lower() or "observa" in col_clean.lower():
                     row_values.append(str(doc_data.get("nota") or ""))
+                elif "reprocessar" in col_clean.lower():
+                    row_values.append("")
                 else:
                     row_values.append(mapping.get(col_clean, ""))
         else:
             row_values = [
-                str(doc_data.get("numero_documento") or ""),
+                str(doc_data.get("numero_documento") or doc_data.get("numero_lote") or ""),
                 str(doc_data.get("tipo_documento") or "A Rever"),
                 str(doc_data.get("fornecedor") or ""),
                 str(doc_data.get("farmacia") or "Indeterminado"),
@@ -615,8 +695,11 @@ class SheetsService:
                 str(doc_data.get("data_pagamento") or ""),
                 str(doc_data.get("confianca") or "Baixa"),
                 str(drive_url or ""),
-                str(doc_data.get("nota") or "")
+                str(doc_data.get("nota") or ""),
+                nif_fornecedor,
+                ""
             ]
+
 
         if self.is_offline:
             return self._append_local(doc_data, row_values, drive_url)

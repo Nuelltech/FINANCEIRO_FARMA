@@ -157,7 +157,7 @@ class GDriveService:
             if farmacia in ["Farmácia Baptista", "Farmácia Campeã"]:
                 subpath = f"{farmacia}/{categoria}"
             else:
-                subpath = f"A Rever"
+                subpath = f"Indeterminado/{categoria}"
 
         if self.is_offline:
             target_dir = os.path.join(self.local_output_dir, subpath)
@@ -204,6 +204,47 @@ class GDriveService:
                 "new_filename": file_info['name'],
                 "drive_url": file_info.get('web_view_link', ''),
                 "subpath": "A Rever"
+            }
+
+    def move_and_rename_file(self, file_id: str, new_filename: str, subpath: str) -> dict:
+        """
+        Move e renomeia um ficheiro existente no Google Drive para uma nova subpasta.
+        Usado no workflow de reprocessamento manual.
+        """
+        if self.is_offline:
+            target_dir = os.path.join(self.local_output_dir, subpath)
+            os.makedirs(target_dir, exist_ok=True)
+            target_path = os.path.join(target_dir, new_filename)
+            return {
+                "new_filename": new_filename,
+                "drive_url": f"file:///{os.path.abspath(target_path)}",
+                "subpath": subpath
+            }
+
+        try:
+            target_folder_id = self._get_or_create_subfolder(subpath)
+            file = self.service.files().get(fileId=file_id, fields='parents').execute()
+            previous_parents = ",".join(file.get('parents', []))
+            
+            updated_file = self.service.files().update(
+                fileId=file_id,
+                body={'name': new_filename},
+                addParents=target_folder_id,
+                removeParents=previous_parents,
+                fields='id, name, webViewLink, parents'
+            ).execute()
+
+            return {
+                "new_filename": new_filename,
+                "drive_url": updated_file.get('webViewLink', f"https://drive.google.com/file/d/{file_id}/view"),
+                "subpath": subpath
+            }
+        except Exception as e:
+            print(f"Erro ao mover/renomear ficheiro {file_id}: {e}")
+            return {
+                "new_filename": new_filename,
+                "drive_url": f"https://drive.google.com/file/d/{file_id}/view",
+                "subpath": subpath
             }
 
     def _get_or_create_subfolder(self, subpath: str) -> str:
