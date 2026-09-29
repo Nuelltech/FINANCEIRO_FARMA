@@ -87,22 +87,10 @@ class SheetsService:
     # Aba Fornecedores — Mapa NIF → Nome Canónico
     # ------------------------------------------------------------------
 
-    FORNECEDORES_INICIAIS = [
-        ["500697370", "Cooprofar", "Distribuidor farmacêutico"],
-        ["500856998", "Alliance Healthcare", "Distribuidor farmacêutico"],
-        ["507280147", "NOS", "Telecomunicações"],
-        ["500755030", "Realcópia", "Equipamento de escritório"],
-        ["501177988", "Utilmédica", "Material médico"],
-        ["503000626", "Gameiros", "Material clínico"],
-        ["503041373", "Abbott Laboratórios", "Laboratório farmacêutico"],
-        ["505028136", "Uriach", "Laboratório farmacêutico"],
-        ["500138408", "Verlingue", "Corretora de seguros"],
-        ["503268415", "Águas do Interior", "Água e consumíveis"],
-        ["980341072", "NBC Consultores", "Consultoria"],
-    ]
+    FORNECEDORES_INICIAIS = []
 
     def ensure_fornecedores_sheet_exists(self):
-        """Garante que a aba 'Fornecedores' existe com cabeçalhos e NIFs iniciais."""
+        """Garante que a aba 'Fornecedores' existe com cabeçalhos."""
         if self.is_offline or not self.service:
             return
 
@@ -111,21 +99,20 @@ class SheetsService:
             sheet_names = [s.get('properties', {}).get('title') for s in spreadsheet.get('sheets', [])]
 
             if 'Fornecedores' not in sheet_names:
-                print("  [GSheets API] A criar aba 'Fornecedores' com mapa inicial de NIFs...")
+                print("  [GSheets API] A criar aba 'Fornecedores'...")
                 self.service.spreadsheets().batchUpdate(
                     spreadsheetId=self.spreadsheet_id,
                     body={'requests': [{'addSheet': {'properties': {'title': 'Fornecedores'}}}]}
                 ).execute()
 
                 header = [["NIF", "Nome Canónico", "Notas"]]
-                rows = header + self.FORNECEDORES_INICIAIS
                 self.service.spreadsheets().values().update(
                     spreadsheetId=self.spreadsheet_id,
                     range="'Fornecedores'!A1",
                     valueInputOption="USER_ENTERED",
-                    body={'values': rows}
+                    body={'values': header}
                 ).execute()
-                print(f"  [GSheets API] Aba 'Fornecedores' criada com {len(self.FORNECEDORES_INICIAIS)} fornecedores iniciais.")
+                print("  [GSheets API] Aba 'Fornecedores' criada.")
         except Exception as e:
             print(f"Erro ao garantir aba 'Fornecedores': {e}")
 
@@ -137,8 +124,7 @@ class SheetsService:
         self.ensure_fornecedores_sheet_exists()
 
         if self.is_offline or not self.service:
-            # Fallback offline: usar mapa interno
-            return {row[0]: row[1] for row in self.FORNECEDORES_INICIAIS if len(row) >= 2}
+            return {}
 
         try:
             res = self.service.spreadsheets().values().get(
@@ -153,11 +139,11 @@ class SheetsService:
                     nome = str(row[1]).strip()
                     if nif and nome:
                         supplier_map[nif] = nome
-            print(f"  [Fornecedores] Mapa carregado: {len(supplier_map)} fornecedores.")
+            print(f"  [Fornecedores] Mapa carregado: {len(supplier_map)} fornecedores registados.")
             return supplier_map
         except Exception as e:
             print(f"Aviso ao ler aba 'Fornecedores': {e}")
-            return {row[0]: row[1] for row in self.FORNECEDORES_INICIAIS if len(row) >= 2}
+            return {}
 
     def save_new_suppliers(self, supplier_map: dict):
         """
@@ -199,11 +185,10 @@ class SheetsService:
     def ensure_resumo_sheet_exists(self):
         """
         Gere a aba 'Resumo Financeiro' de forma não destrutiva:
-        - Se a aba NÃO existir → cria o template completo com fórmulas.
+        - Se a aba NÃO existir → cria o template completo com fórmulas e filtro de datas.
         - Se a aba JÁ EXISTIR → não toca na estrutura; apenas adiciona linhas
           de fornecedores novos no fundo da tabela 'Balanço por Fornecedor'.
-        As fórmulas SOMA.SE.S leem o Registo automaticamente — não precisam
-        de ser reescritas a cada execução.
+        As fórmulas SOMA.SE.S leem o Registo dinamicamente com suporte a filtro de intervalo de datas (B2 e D2).
         """
         if self.is_offline or not self.service:
             return
@@ -219,17 +204,16 @@ class SheetsService:
 
         if not tab_exists:
             # ── Primeira vez: criar o template completo ──────────────────────
-            print("  [GSheets API] Aba 'Resumo Financeiro' não existe. A criar template completo...")
+            print("  [GSheets API] Aba 'Resumo Financeiro' não existe. A criar template com filtro de datas...")
             self._create_resumo_template()
         else:
             # ── Aba já existe: apenas adicionar novos fornecedores ────────────
             self._append_new_suppliers_to_resumo()
 
     def _create_resumo_template(self):
-        """Cria o template completo da aba 'Resumo Financeiro' (chamado apenas na 1ª vez)."""
-        # Descobrir fornecedores actuais no Registo para pré-preencher a tabela
-        known_names = ["Cooprofar", "Alliance Healthcare", "NOS", "Realcópia", "Utilmédica"]
-        suppliers = list(known_names)
+        """Cria o template completo da aba 'Resumo Financeiro' com filtro de datas (B2 e D2)."""
+        # Descobrir APENAS fornecedores reais que já constem no Registo
+        suppliers = []
         try:
             res = self.service.spreadsheets().values().get(
                 spreadsheetId=self.spreadsheet_id,
@@ -241,15 +225,18 @@ class SheetsService:
         except Exception:
             pass
 
+        # Expressão de filtro de datas (célula B2 = Início, D2 = Fim; se vazias, considera todo o histórico)
+        dt_filter = 'Registo!E:E; ">=" & SE($B$2=""; "1900-01-01"; $B$2); Registo!E:E; "<=" & SE($D$2=""; "2099-12-31"; $D$2)'
+
         rows = [
             ["DASHBOARD DE CONTROLO FINANCEIRO - FARMÁCIAS PILOTO"],
-            [""],
+            ["Data Início (AAAA-MM-DD):", "", "Data Fim (AAAA-MM-DD):", "", "(Deixe em branco para ver todo o período)"],
             ["TOTAL FATURADO (€)", "TOTAL CREDITADO (€)", "TOTAL PAGO (€)", "TOTAL PENDENTE A PAGAR (€)", "DOCS A REVER (QTD)"],
             [
-                '=SOMA.SE.S(Registo!G:G; Registo!B:B; "Fatura")',
-                '=SOMA.SE.S(Registo!G:G; Registo!B:B; "Nota de Crédito")',
-                '=SOMA.SE.S(Registo!G:G; Registo!I:I; "Pago")',
-                '=SOMA.SE.S(Registo!G:G; Registo!B:B; "Fatura"; Registo!I:I; "Pendente") - SOMA.SE.S(Registo!G:G; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente")',
+                f'=SOMA.SE.S(Registo!G:G; Registo!B:B; "Fatura"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!B:B; "Nota de Crédito"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!I:I; "Pago"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!B:B; "Fatura"; Registo!I:I; "Pendente"; {dt_filter}) - SOMA.SE.S(Registo!G:G; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente"; {dt_filter})',
                 '=CONTAR.SE(Registo!K:K; "Baixa")'
             ],
             [""],
@@ -257,27 +244,27 @@ class SheetsService:
             ["Farmácia", "Total Faturado (€)", "Notas de Crédito (€)", "Total Pago (€)", "Pendente A Pagar (€)", "Qtd Pendentes"],
             [
                 "Farmácia Baptista",
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Fatura")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Nota de Crédito")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!I:I; "Pago")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente") - SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente")',
-                '=CONTAR.SE.S(Registo!D:D; "Farmácia Baptista"; Registo!I:I; "Pendente")'
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Fatura"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Nota de Crédito"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!I:I; "Pago"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente"; {dt_filter}) - SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Baptista"; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente"; {dt_filter})',
+                f'=CONTAR.SE.S(Registo!D:D; "Farmácia Baptista"; Registo!I:I; "Pendente"; {dt_filter})'
             ],
             [
                 "Farmácia Campeã",
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Fatura")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Nota de Crédito")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!I:I; "Pago")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente") - SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente")',
-                '=CONTAR.SE.S(Registo!D:D; "Farmácia Campeã"; Registo!I:I; "Pendente")'
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Fatura"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Nota de Crédito"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!I:I; "Pago"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente"; {dt_filter}) - SOMA.SE.S(Registo!G:G; Registo!D:D; "Farmácia Campeã"; Registo!B:B; "Nota de Crédito"; Registo!I:I; "Pendente"; {dt_filter})',
+                f'=CONTAR.SE.S(Registo!D:D; "Farmácia Campeã"; Registo!I:I; "Pendente"; {dt_filter})'
             ],
             [
                 "Indeterminado / A Rever",
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Fatura")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Nota de Crédito")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!I:I; "Pago")',
-                '=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente")',
-                '=CONTAR.SE.S(Registo!D:D; "Indeterminado"; Registo!I:I; "Pendente")'
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Fatura"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Nota de Crédito"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!I:I; "Pago"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!D:D; "Indeterminado"; Registo!B:B; "Fatura"; Registo!I:I; "Pendente"; {dt_filter})',
+                f'=CONTAR.SE.S(Registo!D:D; "Indeterminado"; Registo!I:I; "Pendente"; {dt_filter})'
             ],
             [""],
             ["BALANÇO POR FORNECEDOR"],
@@ -289,9 +276,9 @@ class SheetsService:
             row_num = start_row + idx
             rows.append([
                 sup,
-                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Fatura")',
-                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Nota de Crédito")',
-                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!I:I; "Pago")',
+                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Fatura"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Nota de Crédito"; {dt_filter})',
+                f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!I:I; "Pago"; {dt_filter})',
                 f'=B{row_num}-C{row_num}-D{row_num}'
             ])
 
@@ -308,14 +295,14 @@ class SheetsService:
                 valueInputOption="USER_ENTERED",
                 body={'values': rows}
             ).execute()
-            print(f"  [GSheets API] Template 'Resumo Financeiro' criado com {len(suppliers)} fornecedor(es).")
+            print(f"  [GSheets API] Template 'Resumo Financeiro' criado com {len(suppliers)} fornecedor(es) e filtro de datas.")
         except Exception as e:
             print(f"Erro ao criar template 'Resumo Financeiro': {e}")
 
     def _append_new_suppliers_to_resumo(self):
         """
         Adiciona linhas de fornecedores NOVOS no fundo da tabela 'Balanço por Fornecedor'
-        sem tocar em nada do que já existe na aba.
+        com suporte ao filtro de datas, sem tocar no que já existe.
         """
         try:
             # Ler nomes de fornecedores já presentes na tabela (coluna A, a partir da linha 14)
@@ -345,15 +332,17 @@ class SheetsService:
             if not novos:
                 return  # Nada a fazer — template está completo
 
+            dt_filter = 'Registo!E:E; ">=" & SE($B$2=""; "1900-01-01"; $B$2); Registo!E:E; "<=" & SE($D$2=""; "2099-12-31"; $D$2)'
+
             # Adicionar linhas para fornecedores novos
             new_rows = []
             for idx, sup in enumerate(novos):
                 row_num = last_row + 1 + idx
                 new_rows.append([
                     sup,
-                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Fatura")',
-                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Nota de Crédito")',
-                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!I:I; "Pago")',
+                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Fatura"; {dt_filter})',
+                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Nota de Crédito"; {dt_filter})',
+                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!I:I; "Pago"; {dt_filter})',
                     f'=B{row_num}-C{row_num}-D{row_num}'
                 ])
 
@@ -367,6 +356,7 @@ class SheetsService:
             print(f"  [GSheets API] {len(new_rows)} novo(s) fornecedor(es) adicionado(s) ao 'Resumo Financeiro'.")
         except Exception as e:
             print(f"Aviso ao actualizar fornecedores no 'Resumo Financeiro': {e}")
+
 
 
 
