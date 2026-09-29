@@ -137,6 +137,21 @@ class GDriveService:
                 status, done = downloader.next_chunk()
         return dest_path
 
+    def find_file_url_by_name(self, filename: str) -> str:
+        """Procura um ficheiro pelo nome no Google Drive e retorna o webViewLink."""
+        if self.is_offline or not self.service:
+            return ""
+        try:
+            safe_name = filename.replace("'", "\\'")
+            query = f"name = '{safe_name}' and trashed = false"
+            res = self.service.files().list(q=query, fields="files(id, name, webViewLink)", pageSize=1).execute()
+            files = res.get('files', [])
+            if files:
+                return files[0].get('webViewLink') or f"https://drive.google.com/file/d/{files[0]['id']}/view"
+        except Exception:
+            pass
+        return ""
+
     def organize_file(self, file_info: dict, metadata: dict) -> dict:
         """Renomeia e move o ficheiro no Google Drive."""
         farmacia = metadata.get("farmacia", "Indeterminado")

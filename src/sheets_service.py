@@ -923,14 +923,14 @@ class SheetsService:
         except Exception as e:
             print(f"Aviso ao conciliar faturas com lotes: {e}")
 
-    def heal_missing_file_links(self, supabase_service=None):
+    def heal_missing_file_links(self, supabase_service=None, gdrive_service=None):
         """
         Auto-Cura (Self-Healing):
         Verifica se existem linhas no 'Registo' onde o nome do ficheiro perdeu o link clicável
         (virou texto simples) e restaura automaticamente a fórmula =HYPERLINK(url; "nome") a partir
-        da base de dados central (Supabase).
+        da base de dados central (Supabase) ou do Google Drive.
         """
-        if self.is_offline or not self.service or not supabase_service:
+        if self.is_offline or not self.service:
             return
 
         try:
@@ -948,10 +948,10 @@ class SheetsService:
             idx_forn = next((i for i, h in enumerate(header) if "fornecedor" in h), None)
             idx_ficheiro = next((i for i, h in enumerate(header) if "ficheiro" in h or "arquivo" in h), 11)
 
-            # Obter registos do Supabase
-            processed_files = supabase_service.get_all_processed_files()
-            if not processed_files:
-                return
+            # Obter registos do Supabase se disponível
+            processed_files = []
+            if supabase_service:
+                processed_files = supabase_service.get_all_processed_files() or []
 
             # Mapeamento rápido por nome de ficheiro e por tuplo (fornecedor, num_doc)
             url_by_filename = {}
@@ -987,6 +987,10 @@ class SheetsService:
                         f_name = r[idx_forn].strip().lower() if idx_forn < len(r) else ""
                         d_name = r[idx_doc].strip().lower() if idx_doc < len(r) else ""
                         matched_url = url_by_doc.get((f_name, d_name))
+
+                    # Fallback direto no Google Drive se não estiver no Supabase
+                    if not matched_url and gdrive_service:
+                        matched_url = gdrive_service.find_file_url_by_name(cell_val)
 
                     if matched_url:
                         formula = f'=HYPERLINK("{matched_url}"; "{cell_val}")'

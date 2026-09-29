@@ -155,8 +155,7 @@ class SupabaseService:
         if not self.is_offline and self.client:
             try:
                 self.client.table("resumos_lote").update({
-                    "lote_conciliado": lote_conciliado,
-                    "valor_apurado": valor_apurado
+                    "lote_conciliado": lote_conciliado
                 }).eq("numero_lote", str(numero_lote)).execute()
                 return True
             except Exception as e:
