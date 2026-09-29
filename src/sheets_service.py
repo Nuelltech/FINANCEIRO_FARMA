@@ -197,24 +197,49 @@ class SheetsService:
             print(f"Aviso ao guardar novos fornecedores: {e}")
 
     def ensure_resumo_sheet_exists(self):
-        """Cria e atualiza a aba 'Resumo Financeiro' com fórmulas dinâmicas do Google Sheets."""
-        default_suppliers = ["Cooprofar", "Alliance Healthcare", "NOS", "Realcópia", "Utilmédica"]
-        suppliers = list(default_suppliers)
-        
-        if not self.is_offline and self.service:
-            try:
-                res = self.service.spreadsheets().values().get(
-                    spreadsheetId=self.spreadsheet_id,
-                    range="'Registo'!C2:C1000"
-                ).execute()
-                cols = res.get('values', [])
-                for r in cols:
-                    if r and len(r) > 0:
-                        sup = str(r[0]).strip()
-                        if sup and sup not in suppliers and sup.lower() != "fornecedor":
-                            suppliers.append(sup)
-            except Exception as e:
-                print(f"Aviso ao ler fornecedores de Registo: {e}")
+        """
+        Gere a aba 'Resumo Financeiro' de forma não destrutiva:
+        - Se a aba NÃO existir → cria o template completo com fórmulas.
+        - Se a aba JÁ EXISTIR → não toca na estrutura; apenas adiciona linhas
+          de fornecedores novos no fundo da tabela 'Balanço por Fornecedor'.
+        As fórmulas SOMA.SE.S leem o Registo automaticamente — não precisam
+        de ser reescritas a cada execução.
+        """
+        if self.is_offline or not self.service:
+            return
+
+        # Verificar se a aba já existe
+        try:
+            spreadsheet = self.service.spreadsheets().get(spreadsheetId=self.spreadsheet_id).execute()
+            sheet_names = [s.get('properties', {}).get('title') for s in spreadsheet.get('sheets', [])]
+            tab_exists = 'Resumo Financeiro' in sheet_names
+        except Exception as e:
+            print(f"Aviso ao verificar aba 'Resumo Financeiro': {e}")
+            return
+
+        if not tab_exists:
+            # ── Primeira vez: criar o template completo ──────────────────────
+            print("  [GSheets API] Aba 'Resumo Financeiro' não existe. A criar template completo...")
+            self._create_resumo_template()
+        else:
+            # ── Aba já existe: apenas adicionar novos fornecedores ────────────
+            self._append_new_suppliers_to_resumo()
+
+    def _create_resumo_template(self):
+        """Cria o template completo da aba 'Resumo Financeiro' (chamado apenas na 1ª vez)."""
+        # Descobrir fornecedores actuais no Registo para pré-preencher a tabela
+        known_names = ["Cooprofar", "Alliance Healthcare", "NOS", "Realcópia", "Utilmédica"]
+        suppliers = list(known_names)
+        try:
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Registo'!C2:C1000"
+            ).execute()
+            for r in res.get('values', []):
+                if r and r[0].strip() and r[0].strip() not in suppliers and r[0].strip().lower() != "fornecedor":
+                    suppliers.append(r[0].strip())
+        except Exception:
+            pass
 
         rows = [
             ["DASHBOARD DE CONTROLO FINANCEIRO - FARMÁCIAS PILOTO"],
@@ -269,24 +294,81 @@ class SheetsService:
                 f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!I:I; "Pago")',
                 f'=B{row_num}-C{row_num}-D{row_num}'
             ])
-        self.ensure_sheet_tab_exists("Resumo Financeiro", rows)
-        
-        # Limpar fórmulas antigas com erro e reescrever fórmulas atualizadas
-        if not self.is_offline and self.service:
-            try:
-                self.service.spreadsheets().values().clear(
-                    spreadsheetId=self.spreadsheet_id,
-                    range="'Resumo Financeiro'!A1:Z50"
-                ).execute()
 
-                self.service.spreadsheets().values().update(
-                    spreadsheetId=self.spreadsheet_id,
-                    range="'Resumo Financeiro'!A1",
-                    valueInputOption="USER_ENTERED",
-                    body={'values': rows}
-                ).execute()
-            except Exception as e:
-                print(f"Aviso ao atualizar fórmulas da aba Resumo Financeiro: {e}")
+        try:
+            # Criar a aba
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={'requests': [{'addSheet': {'properties': {'title': 'Resumo Financeiro'}}}]}
+            ).execute()
+            # Escrever o template
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Resumo Financeiro'!A1",
+                valueInputOption="USER_ENTERED",
+                body={'values': rows}
+            ).execute()
+            print(f"  [GSheets API] Template 'Resumo Financeiro' criado com {len(suppliers)} fornecedor(es).")
+        except Exception as e:
+            print(f"Erro ao criar template 'Resumo Financeiro': {e}")
+
+    def _append_new_suppliers_to_resumo(self):
+        """
+        Adiciona linhas de fornecedores NOVOS no fundo da tabela 'Balanço por Fornecedor'
+        sem tocar em nada do que já existe na aba.
+        """
+        try:
+            # Ler nomes de fornecedores já presentes na tabela (coluna A, a partir da linha 14)
+            res = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Resumo Financeiro'!A14:A200"
+            ).execute()
+            existing_in_resumo = set()
+            last_row = 13  # linha anterior à primeira linha de fornecedores
+            for i, row in enumerate(res.get('values', []), start=14):
+                if row and str(row[0]).strip():
+                    existing_in_resumo.add(str(row[0]).strip())
+                    last_row = i
+
+            # Ler fornecedores actuais do Registo
+            res2 = self.service.spreadsheets().values().get(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Registo'!C2:C1000"
+            ).execute()
+            registo_suppliers = set()
+            for r in res2.get('values', []):
+                if r and r[0].strip() and r[0].strip().lower() != "fornecedor":
+                    registo_suppliers.add(r[0].strip())
+
+            # Descobrir fornecedores que ainda não têm linha no Resumo Financeiro
+            novos = [s for s in registo_suppliers if s not in existing_in_resumo]
+            if not novos:
+                return  # Nada a fazer — template está completo
+
+            # Adicionar linhas para fornecedores novos
+            new_rows = []
+            for idx, sup in enumerate(novos):
+                row_num = last_row + 1 + idx
+                new_rows.append([
+                    sup,
+                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Fatura")',
+                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!B:B; "Nota de Crédito")',
+                    f'=SOMA.SE.S(Registo!G:G; Registo!C:C; A{row_num}; Registo!I:I; "Pago")',
+                    f'=B{row_num}-C{row_num}-D{row_num}'
+                ])
+
+            self.service.spreadsheets().values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range="'Resumo Financeiro'!A:E",
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body={'values': new_rows}
+            ).execute()
+            print(f"  [GSheets API] {len(new_rows)} novo(s) fornecedor(es) adicionado(s) ao 'Resumo Financeiro'.")
+        except Exception as e:
+            print(f"Aviso ao actualizar fornecedores no 'Resumo Financeiro': {e}")
+
+
 
     def ensure_log_sheet_exists(self):
         header = [[
